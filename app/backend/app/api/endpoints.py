@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import hashlib
 import json
@@ -124,7 +125,7 @@ async def get_incidents(
     stmt = select(Incident)
     if status:
         stmt = stmt.filter(Incident.status == status)
-    stmt = stmt.order_by(Incident.created_at.desc())
+    stmt = stmt.options(selectinload(Incident.recommendations)).order_by(Incident.created_at.desc())
     result = await db.execute(stmt)
     return result.scalars().all()
 

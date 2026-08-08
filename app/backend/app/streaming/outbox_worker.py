@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 async def process_outbox(redis_publisher: RedisPublisher):
     """
     Query up to 100 unpublished events from the DB and publish them to Redis.
-    Uses individual transactions for reliability.
+    Uses batch commits for high throughput over high-latency WAN connections.
     """
     async with SessionLocal() as session:
         # Fetch a batch of unpublished events ordered by insertion
@@ -29,6 +29,7 @@ async def process_outbox(redis_publisher: RedisPublisher):
         if not events:
             return
 
+        published_ids = []
         for ev in events:
             # Reconstruct the Pydantic EventEnvelope
             envelope = EventEnvelope(
@@ -46,19 +47,22 @@ async def process_outbox(redis_publisher: RedisPublisher):
             try:
                 # Publish to Redis Stream
                 await redis_publisher.publish_event(envelope)
-
-                # Mark as published in Postgres
                 ev.published_to_stream = True  # type: ignore[assignment]
-                await session.commit()
+                published_ids.append(ev.id)
             except Exception as e:
-                # Rollback current transaction and stop batch processing.
-                # The failed event and subsequent events will be retried on next poll.
-                await session.rollback()
                 logger.error(
-                    f"Outbox worker failed to process event {ev.event_id}. "
-                    f"Transaction rolled back. Error: {e}"
+                    f"Outbox worker failed to publish event {ev.event_id} to Redis: {e}"
                 )
+                # Stop processing subsequent events in this batch
                 break
+
+        if published_ids:
+            try:
+                await session.commit()
+                logger.info(f"Successfully committed outbox status for {len(published_ids)} events.")
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Failed to commit outbox status in database: {e}")
 
 
 async def start_outbox_worker(
