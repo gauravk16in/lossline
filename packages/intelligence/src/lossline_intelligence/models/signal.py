@@ -18,6 +18,23 @@ from pydantic import (
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
+class Severity(StrEnum):
+    """Categorical severity band shared by all deterministic detectors."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+SEVERITY_SCORE: dict[Severity, float] = {
+    Severity.LOW: 0.25,
+    Severity.MEDIUM: 0.50,
+    Severity.HIGH: 0.75,
+    Severity.CRITICAL: 0.95,
+}
+
+
 class SignalType(StrEnum):
     """Signal types frozen for the M1 lunch-rush scenario."""
 

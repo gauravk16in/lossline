@@ -1,0 +1,67 @@
+"""Detectors sub-package for LOSSLine intelligence."""
+
+from lossline_intelligence.detectors.cancellation import (
+    ABSOLUTE_GAP_THRESHOLD,
+    DETECTOR_VERSION as CANCELLATION_DETECTOR_VERSION,
+    MIN_ORDER_COUNT as CANCELLATION_MIN_ORDER_COUNT,
+    RATIO_THRESHOLD as CANCELLATION_RATIO_THRESHOLD,
+    SEVERITY_SCALE as CANCELLATION_SEVERITY_SCALE,
+    detect_cancellation_spike,
+)
+from lossline_intelligence.detectors.handoff import (
+    DETECTOR_VERSION as HANDOFF_DETECTOR_VERSION,
+    MIN_HANDOFF_COMPLETED_COUNT,
+    RATIO_THRESHOLD as HANDOFF_RATIO_THRESHOLD,
+    SEVERITY_SCALE as HANDOFF_SEVERITY_SCALE,
+    detect_handoff_delay_spike,
+)
+from lossline_intelligence.detectors.order_volume import (
+    DETECTOR_VERSION as ORDER_VOLUME_DETECTOR_VERSION,
+    MIN_ORDER_COUNT as ORDER_VOLUME_MIN_ORDER_COUNT,
+    RATIO_THRESHOLD as ORDER_VOLUME_RATIO_THRESHOLD,
+    SEVERITY_SCALE as ORDER_VOLUME_SEVERITY_SCALE,
+    Z_SCORE_THRESHOLD,
+    detect_order_volume_spike,
+)
+from lossline_intelligence.detectors.preparation import (
+    DETECTOR_VERSION as PREP_DETECTOR_VERSION,
+    MIN_PREP_COMPLETED_COUNT,
+    RATIO_THRESHOLD as PREP_RATIO_THRESHOLD,
+    SEVERITY_SCALE as PREP_SEVERITY_SCALE,
+    detect_prep_time_spike,
+)
+from lossline_intelligence.detectors.reviews import (
+    DETECTOR_VERSION as DELAY_REVIEW_DETECTOR_VERSION,
+    MIN_QUALIFYING_REVIEWS,
+    SEVERITY_SCALE as DELAY_REVIEW_SEVERITY_SCALE,
+    detect_delay_review_spike,
+)
+
+__all__ = [
+    "detect_cancellation_spike",
+    "detect_order_volume_spike",
+    "detect_prep_time_spike",
+    "detect_handoff_delay_spike",
+    "detect_delay_review_spike",
+    "CANCELLATION_DETECTOR_VERSION",
+    "CANCELLATION_MIN_ORDER_COUNT",
+    "CANCELLATION_RATIO_THRESHOLD",
+    "ABSOLUTE_GAP_THRESHOLD",
+    "CANCELLATION_SEVERITY_SCALE",
+    "ORDER_VOLUME_DETECTOR_VERSION",
+    "ORDER_VOLUME_MIN_ORDER_COUNT",
+    "ORDER_VOLUME_RATIO_THRESHOLD",
+    "ORDER_VOLUME_SEVERITY_SCALE",
+    "Z_SCORE_THRESHOLD",
+    "PREP_DETECTOR_VERSION",
+    "MIN_PREP_COMPLETED_COUNT",
+    "PREP_RATIO_THRESHOLD",
+    "PREP_SEVERITY_SCALE",
+    "HANDOFF_DETECTOR_VERSION",
+    "MIN_HANDOFF_COMPLETED_COUNT",
+    "HANDOFF_RATIO_THRESHOLD",
+    "HANDOFF_SEVERITY_SCALE",
+    "DELAY_REVIEW_DETECTOR_VERSION",
+    "MIN_QUALIFYING_REVIEWS",
+    "DELAY_REVIEW_SEVERITY_SCALE",
+]

@@ -1,4 +1,8 @@
-"""Aggregated operational metrics for a single outlet analysis window."""
+"""Aggregated operational metrics for a single outlet analysis window.
+
+Moved from the stray lossline_intelligence/aggregation/ tree into the
+installed src/ layout.  Content is unchanged from the original model.
+"""
 
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -12,7 +16,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-
 
 
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -38,12 +41,15 @@ class MetricSnapshot(BaseModel):
 
     avg_prep_minutes: NonNegativeDecimal
     p90_prep_minutes: NonNegativeDecimal
+    prep_completed_count: NonNegativeCount
 
     avg_handoff_wait_minutes: NonNegativeDecimal
+    handoff_completed_count: NonNegativeCount
 
     review_count: NonNegativeCount
     negative_review_count: NonNegativeCount
     delay_review_count: NonNegativeCount
+    delay_review_event_ids: tuple[Identifier, ...]
 
     source_event_ids: tuple[Identifier, ...]
 
@@ -66,14 +72,14 @@ class MetricSnapshot(BaseModel):
             raise ValueError("timestamps must include a UTC offset")
         return value.astimezone(timezone.utc)
 
-    @field_validator("source_event_ids")
+    @field_validator("source_event_ids", "delay_review_event_ids")
     @classmethod
-    def require_unique_source_events(
+    def require_unique_event_ids(
         cls,
         value: tuple[str, ...],
     ) -> tuple[str, ...]:
         if len(value) != len(set(value)):
-            raise ValueError("source event IDs must be unique")
+            raise ValueError("event IDs must be unique")
         return value
 
     @model_validator(mode="after")
