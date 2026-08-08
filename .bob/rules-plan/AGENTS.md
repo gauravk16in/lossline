@@ -1,14 +1,16 @@
 # Project Architecture Rules (Non-Obvious Only)
 
-- **Deterministic code owns all numeric outputs** — LLM (`ExplanationProvider`) produces only prose from structured inputs; it must never select recommendations, alter state, or introduce numbers not present in evidence.
-- **LangGraph starts only after deterministic correlation creates an incident** — it never fires per event; it is the investigation/approval/resume orchestrator, not the detector.
-- **Redis `restaurant.events` is the only stream** — the plan explicitly names one consumer group (`detection`) and one stream for M1.
-- **Transactional outbox pattern is mandatory** — event insert + outbox row in one transaction; publisher marks complete after Redis append. Redis unavailability must leave accepted events in the outbox for recovery, not silently drop them.
-- **Incident deduplication is by fingerprint** `(restaurant_id, incident_type, correlation_rule_version)` — resolved/rejected incidents are never reopened by late events; only active-status incidents merge new signals.
-- **All actions are medium-risk and require approval** — high confidence does not bypass the manager approval step in M1.
-- **WebSocket is non-durable presentation only** — REST is authoritative; reconnect must reload state from REST, not replay WebSocket history.
-- **Confidence `<.50` triggers exactly one LangGraph retry** (evidence window widened by ±1 hour) before becoming `MONITOR_ONLY` with no recommendation — the retry count ceiling is config, not code logic.
-- **Revenue display must use "Estimated revenue exposure"** and show horizon/inputs; never claim profit loss or causal certainty.
-- **Demo reset endpoint must check demo mode and synthetic scenario IDs** before deleting anything — returning `404` in non-demo mode is a safety requirement, not a convenience.
-- **`app/` directory is a dead placeholder** — the plan targets `apps/backend/` and `apps/frontend/`; new backend/frontend code belongs in `apps/`.
-- **All restaurant UI data must display "Synthetic data for demonstration."** — this is a frozen requirement, not a style choice.
+- **Pydantic models are I/O contract boundaries only** — `Signal` and `MetricSnapshot` are validated at serialization edges. Internal pipeline objects (`IncidentCandidate`, `ConfidenceResult`, `Recommendation`) are `@dataclass(frozen=True)` — this is a deliberate architectural boundary, not an oversight.
+- **`CANCELLATION_SPIKE` is a required correlation signal** (see `correlation/rules.py`) — the plan says "at least one of handoff/cancellation" but the code requires both volume+prep+cancellation. `HANDOFF_DELAY_SPIKE` and `DELAY_REVIEW_SPIKE` are supporting-only.
+- **`correlate_signals()` returns one candidate per call** — it stops at the first qualifying outlet and returns. Multi-outlet handling requires calling it per outlet.
+- **`outlet_id` is the operational identity** throughout the intelligence pipeline — `restaurant_id` on `IncidentCandidate` is a backward-compat property alias only; correlation, deduplication, and isolation all use `outlet_id`.
+- **Intelligence package location must be resolved before broader implementation** — `docs/architecture.md` explicitly says "`packages/intelligence/` or `services/intelligence/`" — the backend will import whichever wins; do not design the import path until this is decided.
+- **Deterministic code owns all numeric outputs** — LLM (`ExplanationProvider`) may produce prose only. It never calculates metrics, confidence, revenue, recommendation selection, or outcome status.
+- **LangGraph fires only after deterministic correlation creates an incident** — never per raw event.
+- **Redis `restaurant.events` is the only stream** — one consumer group (`detection`) in M1.
+- **Transactional outbox is mandatory** — event + outbox in one PostgreSQL transaction; Redis unavailability leaves outbox pending, not silent data loss.
+- **Incident deduplication fingerprint**: `(outlet_id, incident_type, correlation_rule_version)` — resolved/rejected incidents are never reopened.
+- **All actions require manager approval** — high confidence does not bypass this in M1.
+- **WebSocket is non-durable** — REST is authoritative; reconnect reloads state via REST, not WebSocket history.
+- **Demo reset is only available in demo mode** and may only delete records tied to validated synthetic scenario runs — returns `404` otherwise.
+- **All UI restaurant data must show "Synthetic data for demonstration."** — frozen requirement.
