@@ -212,3 +212,67 @@ async def test_mapper_restaurant_id_becomes_outlet_id() -> None:
     normalized = envelope_to_normalized(envelope)
     assert normalized.outlet_id == envelope.restaurant_id
     assert normalized.amount == Decimal("500.0")
+
+
+@pytest.mark.asyncio
+async def test_pipeline_persists_operational_overload_incident(
+    db_session: AsyncSession,
+) -> None:
+    """M1: volume + prep + cancel -> OPERATIONAL_OVERLOAD + recommendation."""
+    from src.db.models import Recommendation
+    from src.intelligence.m1_scenario import (
+        OUTLET,
+        m1_overload_payloads,
+        m1_trigger_payload,
+    )
+
+    db_session.add(
+        Restaurant(
+            id=OUTLET,
+            name="Outlet 17",
+            timezone="UTC",
+            currency="INR",
+            synthetic=True,
+        )
+    )
+    await db_session.commit()
+
+    for payload in m1_overload_payloads(include_supporting=True):
+        await _persist_envelope(db_session, payload)
+
+    trigger = EventEnvelope(**m1_trigger_payload())
+    with (
+        patch(
+            "src.intelligence.pipeline.SessionLocal",
+            return_value=AsyncContextManagerMock(db_session),
+        ),
+        patch(
+            "src.intelligence.pipeline.broadcast_incident_transition",
+            new_callable=AsyncMock,
+        ) as broadcast,
+    ):
+        await run_detection_pipeline(trigger)
+
+    signal_types = {
+        row.signal_type
+        for row in (await db_session.execute(select(Signal))).scalars().all()
+    }
+    assert "ORDER_VOLUME_SPIKE" in signal_types
+    assert "PREP_TIME_SPIKE" in signal_types
+    assert "CANCELLATION_SPIKE" in signal_types
+
+    incidents = (await db_session.execute(select(Incident))).scalars().all()
+    assert len(incidents) == 1
+    assert incidents[0].incident_type == "OPERATIONAL_OVERLOAD"
+    assert incidents[0].status == "AWAITING_APPROVAL"
+    assert incidents[0].confidence >= 0.50
+    assert incidents[0].revenue_at_risk is not None
+
+    recs = (
+        await db_session.execute(
+            select(Recommendation).where(Recommendation.incident_id == incidents[0].id)
+        )
+    ).scalars().all()
+    assert len(recs) == 1
+    assert recs[0].rule_id == "OPERATIONAL_OVERLOAD_V1"
+    broadcast.assert_awaited()
