@@ -1,37 +1,64 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
+This file provides guidance to agents when working with code in this repository.
 
-LOSSLine is currently in its planning stage. Treat `FINAL_IMPLEMENTATION_PLAN.md` as the implementation authority; `IMPLEMENTATION_PLAN.md` is the superseded candidate. The intended repository boundaries are:
+## Project Status
 
-- `apps/backend/`: FastAPI application, persistence models, and HTTP endpoints.
-- `apps/frontend/`: operator dashboard and incident/action workflows.
-- `services/intelligence/`: deterministic aggregation, anomaly detection, correlation, confidence scoring, and recommendations.
-- `simulator/`: synthetic restaurant events and repeatable demo scenarios.
-- `docs/`: architecture decisions, contracts, runbooks, and demo guidance created during implementation.
+LOSSLine is in early implementation. `FINAL_IMPLEMENTATION_PLAN.md` is the implementation authority; `IMPLEMENTATION_PLAN.md` is superseded. Most directories (`apps/`, `services/`, `simulator/`, `docs/`, `scripts/`) contain only empty placeholder files. The only implemented package is `packages/intelligence/`.
 
-Keep the MVP a modular monolith. The frozen path is FastAPI → PostgreSQL/outbox → Redis Stream `restaurant.events` → deterministic detection → LangGraph investigation, with REST as authoritative UI state and WebSocket for transient live transitions. Do not bypass the real ingestion path in the simulator.
+The `app/` directory (with placeholder `x.txt`/`y.txt`) is distinct from `apps/` — both exist but only `apps/` is the intended target from the plan. Do not add code to `app/`.
 
-## Build, Test, and Development Commands
+## Python Environment
 
-No build or test tooling is committed yet. Document setup in the root README and expose predictable commands such as `make dev`, `make test`, and `make lint`. Pin dependencies and commit lockfiles.
+The root `.venv/` is the shared virtual environment for all Python packages. Use `.venv/bin/python` and `.venv/bin/pytest` — do not create per-package venvs. Python 3.12 is required (`requires-python = ">=3.12"`).
 
-## Coding Style & Naming Conventions
+`lossline-intelligence` is installed into `.venv` as an editable package (`pip install -e packages/intelligence`). The authoritative source is `packages/intelligence/src/lossline_intelligence/`. There is also a stray `packages/intelligence/lossline_intelligence/` tree that predates the `src/` layout — the installed package resolves to `src/`, so new modules go under `src/lossline_intelligence/`.
 
-For Python, use 4-space indentation, type annotations, `snake_case` for functions/modules, and `PascalCase` for classes and Pydantic models. Keep business calculations deterministic and side-effect free where practical. Numeric rules belong in versioned configuration; never present defaults as business facts.
+## Build, Test, and Lint Commands
 
-For frontend code, use `PascalCase` for components and `camelCase` for variables and hooks. Add formatter and linter configuration with the first implementation.
+No `Makefile` exists yet. Commands to run from the **repo root**:
 
-## Testing Guidelines
+```bash
+# Run all intelligence tests
+.venv/bin/pytest packages/intelligence/tests/
 
-Place tests near their package or in package-level `tests/`, using names such as `test_cancellation_detector.py`. Unit-test every deterministic rule. Integration tests cover the PostgreSQL outbox, Redis replay/idempotency, LangGraph resume, REST contracts, and WebSocket reconnect. Keep one seeded end-to-end lunch-rush scenario. Fake LLM calls in automated tests.
+# Run a single test
+.venv/bin/pytest packages/intelligence/tests/test_signal_model.py::test_signal_accepts_valid_detector_output -v
 
-## Commit & Pull Request Guidelines
+# Install intelligence package in editable mode (first-time setup)
+.venv/bin/pip install -e "packages/intelligence[dev]"
+```
 
-The history is too small to establish a reliable commit convention. Use short, imperative subjects, optionally with a scoped conventional prefix, such as `feat(simulator): add lunch rush scenario`. Keep commits focused.
+`pytest` picks up config from `packages/intelligence/pyproject.toml` (`testpaths = ["tests"]`) when invoked from `packages/intelligence/`, but running from the repo root with an explicit path also works.
 
-Pull requests should explain changed behavior, tests, and contract/configuration/schema impact. Link the relevant final-plan section. Include screenshots for UI changes and payloads for API changes. Label demo metrics as synthetic, use uncertainty language, and distinguish estimated exposure from observed loss.
+No formatter, linter, or type-checker config has been committed yet. When adding them, use `ruff` for formatting/linting and `mypy` or `pyright` for types, and add config to `packages/intelligence/pyproject.toml`.
 
-## Security & Configuration
+## Package Build System
 
-Keep secrets and provider credentials in ignored environment files; commit only sanitized examples such as `.env.example`. Validate all incoming events with typed schemas, and never log credentials or unredacted sensitive payloads.
+`packages/intelligence` uses `hatchling==1.27.0` as its build backend (pinned). Dependency versions are also pinned (`pydantic==2.11.7`, `pytest==8.4.1`). Continue pinning all dependencies.
+
+## Code Style (from existing source)
+
+- **Pydantic models** use `model_config = ConfigDict(extra="forbid", frozen=True)` — all domain models are immutable and reject unknown fields.
+- **Decimal** (not `float`) for all metric values; validated as finite via `field_validator`.
+- **Timestamps** are always timezone-aware and normalized to UTC in validators (`value.astimezone(timezone.utc)`). Naive datetimes are rejected.
+- **`evidence_event_ids`** and similar ID collections use `tuple[Identifier, ...]` (immutable), not `list`.
+- **`Identifier`** is a module-level type alias: `Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]` — reuse it, do not inline bare `str` for IDs.
+- **`StrEnum`** is used for signal/event type enumerations, not `str` + `Literal`.
+- Tests use a `signal_data()` factory function (not a pytest fixture) for baseline valid data, then apply `| {...}` dict merges for variations.
+
+## Architecture Constraints (frozen)
+
+- **LLM never calculates metrics, confidence, revenue, recommendations, or outcomes** — deterministic code owns all numeric outputs; LLM produces only grounded prose explanation.
+- **Simulator must call `POST /events`** — never bypass the ingestion API to write directly to DB or Redis.
+- **`restaurant.events` is the only Redis stream in M1** — no other streams.
+- **All numeric thresholds and weights are `CONFIG_DEFAULT`**, not business facts — put them in versioned config, never hardcode in business logic.
+- **Demo currency is INR** (`₹`) for the M1 lunch-rush scenario; revenue estimates must label assumptions and use "Estimated revenue exposure," never "profit loss."
+- **All UI restaurant data must show "Synthetic data for demonstration."**
+
+## Testing Conventions
+
+- Test files named `test_<module>.py` live in `packages/<pkg>/tests/` (not alongside source).
+- Every deterministic rule needs: below-threshold, at-threshold, above-threshold, sparse-data, and repeatability fixtures.
+- Fake all LLM calls in automated tests.
+- Integration tests must prove Redis crash recovery and PostgreSQL outbox idempotency.
