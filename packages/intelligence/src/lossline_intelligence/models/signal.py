@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Any, Self
 
 from pydantic import (
     BaseModel,
@@ -29,24 +29,28 @@ class SignalType(StrEnum):
 
 
 class Signal(BaseModel):
-    """A versioned, reproducible anomaly detected in one metric window."""
+    """Deterministic anomaly detected for one outlet and analysis window."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     signal_id: Identifier
-    restaurant_id: Identifier
+    outlet_id: Identifier
     signal_type: SignalType
     severity: Annotated[float, Field(ge=0.0, le=1.0, allow_inf_nan=False)]
     current_value: Decimal
     baseline_value: Decimal
-    deviation: Decimal
+    deviation_ratio: Annotated[
+        Decimal,
+        Field(description="Relative change: (current_value - baseline_value) / baseline_value"),
+    ]
     unit: Identifier
     window_start: datetime
     window_end: datetime
     evidence_event_ids: tuple[Identifier, ...] = Field(min_length=1)
     detector_version: Identifier
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("current_value", "baseline_value", "deviation")
+    @field_validator("current_value", "baseline_value", "deviation_ratio")
     @classmethod
     def require_finite_decimal(cls, value: Decimal) -> Decimal:
         if not value.is_finite():
