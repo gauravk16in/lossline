@@ -23,31 +23,12 @@ deviation < 25 %          → None  (normal variance, no signal)
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from enum import StrEnum
 from math import isfinite
 from typing import NamedTuple
 
-from lossline_intelligence.models.signal import Signal, SignalType
+from lossline_intelligence.models.signal import Signal, SignalType, Severity, SEVERITY_SCORE
 
 
-class Severity(StrEnum):
-    """Human-readable severity band for cancellation deviation."""
-
-    LOW = "LOW"
-    MEDIUM = "MEDIUM"
-    HIGH = "HIGH"
-    CRITICAL = "CRITICAL"
-
-
-SEVERITY_SCORE: dict[Severity, float] = {
-    Severity.LOW: 0.25,
-    Severity.MEDIUM: 0.50,
-    Severity.HIGH: 0.75,
-    Severity.CRITICAL: 0.95,
-}
-
-# Threshold table: (minimum_deviation_pct, severity_label)
-# Listed highest-first so the first match wins.
 _THRESHOLDS: tuple[tuple[Decimal, Severity], ...] = (
     (Decimal("1.50"), Severity.CRITICAL),
     (Decimal("1.00"), Severity.HIGH),

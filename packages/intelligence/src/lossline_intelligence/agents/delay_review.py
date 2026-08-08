@@ -90,7 +90,7 @@ class DelayReviewMetrics:
     window_end       : UTC-aware window end.
     """
 
-    restaurant_id: str
+    outlet_id: str
     reviews: tuple[ReviewObservation, ...]
     delay_keywords: frozenset[str]
     window_start: datetime
@@ -132,17 +132,17 @@ def detect_delay_review_spike(metrics: DelayReviewMetrics) -> Signal | None:
     current_dec = Decimal(str(len(qualifying)))
     baseline_dec = Decimal("0")          # reviews: no meaningful baseline count
     window_tag = metrics.window_start.strftime("%Y%m%dT%H%M%SZ")
-    signal_id = f"sig_delay_review_{metrics.restaurant_id}_{window_tag}"
+    signal_id = f"sig_delay_review_{metrics.outlet_id}_{window_tag}"
 
     return Signal.model_validate(
         {
             "signal_id": signal_id,
-            "restaurant_id": metrics.restaurant_id,
+            "outlet_id": metrics.outlet_id,
             "signal_type": SignalType.DELAY_REVIEW_SPIKE,
             "severity": confidence,
             "current_value": current_dec,
             "baseline_value": baseline_dec,
-            "deviation": current_dec - baseline_dec,
+            "deviation_ratio": current_dec - baseline_dec,
             "unit": "qualifying_reviews",
             "window_start": metrics.window_start,
             "window_end": metrics.window_end,

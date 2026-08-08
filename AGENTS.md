@@ -4,61 +4,77 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project Status
 
-LOSSLine is in early implementation. `FINAL_IMPLEMENTATION_PLAN.md` is the implementation authority; `IMPLEMENTATION_PLAN.md` is superseded. Most directories (`apps/`, `services/`, `simulator/`, `docs/`, `scripts/`) contain only empty placeholder files. The only implemented package is `packages/intelligence/`.
+LOSSLine is in active early implementation. `FINAL_IMPLEMENTATION_PLAN.md` is the implementation authority; `IMPLEMENTATION_PLAN.md` is superseded. `docs/architecture.md` is the architectural summary. The only implemented package is `packages/intelligence/` (198 tests, all passing).
 
-The `app/` directory (with placeholder `x.txt`/`y.txt`) is distinct from `apps/` — both exist but only `apps/` is the intended target from the plan. Do not add code to `app/`.
+Most directories (`apps/`, `services/`, `simulator/`, `scripts/`) contain only empty placeholder files. `docs/architecture.md` explicitly notes that `packages/intelligence/` and `services/intelligence/` must converge on one location before broader implementation — do not add intelligence code to `services/intelligence/` until that decision is made.
+
+The `app/` directory (placeholder `x.txt`/`y.txt`) is distinct from `apps/` — both exist; only `apps/` is the intended target. Do not add code to `app/`.
 
 ## Python Environment
 
-The root `.venv/` is the shared virtual environment for all Python packages. Use `.venv/bin/python` and `.venv/bin/pytest` — do not create per-package venvs. Python 3.12 is required (`requires-python = ">=3.12"`).
+The root `.venv/` is the shared virtual environment. Python 3.12 required. `lossline-intelligence` is already installed in editable mode — no setup needed before running tests.
 
-`lossline-intelligence` is installed into `.venv` as an editable package (`pip install -e packages/intelligence`). The authoritative source is `packages/intelligence/src/lossline_intelligence/`. There is also a stray `packages/intelligence/lossline_intelligence/` tree that predates the `src/` layout — the installed package resolves to `src/`, so new modules go under `src/lossline_intelligence/`.
+The stray `packages/intelligence/lossline_intelligence/` tree (no-`src/` layout) has been cleaned up. All source lives under `packages/intelligence/src/lossline_intelligence/`. New modules go there.
 
-## Build, Test, and Lint Commands
-
-No `Makefile` exists yet. Commands to run from the **repo root**:
+## Commands (from repo root)
 
 ```bash
-# Run all intelligence tests
+# Run all tests
 .venv/bin/pytest packages/intelligence/tests/
 
 # Run a single test
 .venv/bin/pytest packages/intelligence/tests/test_signal_model.py::test_signal_accepts_valid_detector_output -v
 
-# Install intelligence package in editable mode (first-time setup)
+# First-time setup
 .venv/bin/pip install -e "packages/intelligence[dev]"
 ```
 
-`pytest` picks up config from `packages/intelligence/pyproject.toml` (`testpaths = ["tests"]`) when invoked from `packages/intelligence/`, but running from the repo root with an explicit path also works.
+No Makefile, formatter, linter, or type-checker config has been committed yet. When adding: use `ruff` + `mypy`/`pyright`, configured in `packages/intelligence/pyproject.toml`. Pin all dependency versions.
 
-No formatter, linter, or type-checker config has been committed yet. When adding them, use `ruff` for formatting/linting and `mypy` or `pyright` for types, and add config to `packages/intelligence/pyproject.toml`.
+## Code Style (from source)
 
-## Package Build System
+**Two model patterns — use the right one:**
+- **Pydantic `BaseModel`** (`ConfigDict(extra="forbid", frozen=True)`) for validated I/O contracts: `Signal`, `MetricSnapshot`. These are serialization boundaries.
+- **`@dataclass(frozen=True)`** for internal pure domain objects: `IncidentCandidate`, `QualityFlags`, `ConfidenceResult`, `Recommendation`. No Pydantic validation overhead for internal types.
 
-`packages/intelligence` uses `hatchling==1.27.0` as its build backend (pinned). Dependency versions are also pinned (`pydantic==2.11.7`, `pytest==8.4.1`). Continue pinning all dependencies.
+**`Identifier` type alias** — `Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]` — defined per module, not shared via import. Reuse, never inline bare `str` for IDs.
 
-## Code Style (from existing source)
+**`Decimal` (not `float`) for all metric values**; validate as finite with `require_finite_decimal`. Use `quantize(_DP, rounding=ROUND_HALF_UP)` with `_DP = Decimal("0.0001")`.
 
-- **Pydantic models** use `model_config = ConfigDict(extra="forbid", frozen=True)` — all domain models are immutable and reject unknown fields.
-- **Decimal** (not `float`) for all metric values; validated as finite via `field_validator`.
-- **Timestamps** are always timezone-aware and normalized to UTC in validators (`value.astimezone(timezone.utc)`). Naive datetimes are rejected.
-- **`evidence_event_ids`** and similar ID collections use `tuple[Identifier, ...]` (immutable), not `list`.
-- **`Identifier`** is a module-level type alias: `Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]` — reuse it, do not inline bare `str` for IDs.
-- **`StrEnum`** is used for signal/event type enumerations, not `str` + `Literal`.
-- Tests use a `signal_data()` factory function (not a pytest fixture) for baseline valid data, then apply `| {...}` dict merges for variations.
+**`StrEnum`** for all enumerations (`SignalType`, `Severity`, `IncidentType`, `ConfidenceTier`, etc.).
 
-## Architecture Constraints (frozen)
+**Timestamps** — always timezone-aware; Pydantic validators call `.astimezone(timezone.utc)`. Naive datetimes are rejected.
 
-- **LLM never calculates metrics, confidence, revenue, recommendations, or outcomes** — deterministic code owns all numeric outputs; LLM produces only grounded prose explanation.
-- **Simulator must call `POST /events`** — never bypass the ingestion API to write directly to DB or Redis.
-- **`restaurant.events` is the only Redis stream in M1** — no other streams.
-- **All numeric thresholds and weights are `CONFIG_DEFAULT`**, not business facts — put them in versioned config, never hardcode in business logic.
-- **Demo currency is INR** (`₹`) for the M1 lunch-rush scenario; revenue estimates must label assumptions and use "Estimated revenue exposure," never "profit loss."
-- **All UI restaurant data must show "Synthetic data for demonstration."**
+**ID collections** — `tuple[Identifier, ...]` (immutable), not `list`. Validated unique.
+
+**Detector signal IDs are deterministic** — format `sig_{prefix}_{outlet_id}_{window_start_utc}_{DETECTOR_VERSION}`. Use `build_signal_id()` from [`detectors/_common.py`](packages/intelligence/src/lossline_intelligence/detectors/_common.py) — do not reimplement.
+
+**`outlet_id` is the canonical field** on all domain models. `restaurant_id` exists only as a `@property` alias on `IncidentCandidate` for downstream compatibility — never use it for new code.
+
+## Package Structure
+
+```
+src/lossline_intelligence/
+  models/          # Signal, SignalType, Severity, SEVERITY_SCORE, IncidentCandidate
+  aggregation/     # MetricSnapshot, MetricSnapshotBuilder, BaselineResult
+  detectors/       # _common.py shared utilities + 5 detector modules
+  correlation/     # engine.py (correlate_signals), rules.py (REQUIRED/SUPPORTING types)
+  scoring/         # confidence.py, revenue_risk.py
+  recommendations/ # playbooks.py (Playbook dataclasses), engine.py (recommend())
+  pipelines/       # confidence.py, correlation.py, outcome.py, recommendations.py, revenue.py
+  agents/          # (legacy agent wrappers — prefer detectors/ for new work)
+```
+
+## Critical Non-Obvious Rules
+
+- **`CANCELLATION_SPIKE` is a REQUIRED signal** (not optional) in `correlation/rules.py` — the implementation differs from the plan's "at least one of handoff/cancellation" wording. `HANDOFF_DELAY_SPIKE` and `DELAY_REVIEW_SPIKE` are supporting.
+- **`correlate_signals()` returns one candidate per call** — it stops at the first qualifying outlet. M1 only.
+- **`recommend()` returns `Recommendation | RecommendationAbstention`** — `recommend_action()` is a backward-compat alias returning `None` on abstention. Use `recommend()` for new code.
+- **All CONFIG_DEFAULT thresholds/weights are module-level constants**, never hardcoded in logic — callers pass overrides as keyword arguments.
+- **Detectors share utilities via `detectors/_common.py`** — `require_matching_outlet`, `window_tag`, `build_signal_id`, `robust_z_score`, `deviation_ratio`. New detectors must use these.
+- **LLM never calculates metrics, confidence, revenue, recommendations, or outcomes.** Deterministic code owns all numbers; LLM produces only grounded prose.
+- **Simulator must call `POST /events`** — never write directly to DB or Redis.
 
 ## Testing Conventions
 
-- Test files named `test_<module>.py` live in `packages/<pkg>/tests/` (not alongside source).
-- Every deterministic rule needs: below-threshold, at-threshold, above-threshold, sparse-data, and repeatability fixtures.
-- Fake all LLM calls in automated tests.
-- Integration tests must prove Redis crash recovery and PostgreSQL outbox idempotency.
+Tests live in `packages/intelligence/tests/`. Shared fixture factories in `tests/fixtures/`. Use plain factory functions (e.g., `signal_data() -> dict`) with `| {...}` dict merges — not pytest fixtures. Every deterministic rule needs: below-threshold, at-threshold, above-threshold, sparse-data, and repeatability cases. Fake all LLM calls.

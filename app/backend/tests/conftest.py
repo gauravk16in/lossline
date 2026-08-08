@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 # Add app to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.db.models import Base  # noqa: E402
-from app.db.session import get_db_session  # noqa: E402
-from app.main import app  # noqa: E402
+from src.db.models import Base  # noqa: E402
+from src.db.session import get_db_session  # noqa: E402
+from src.main import app  # noqa: E402
 
 import logging  # noqa: E402
 

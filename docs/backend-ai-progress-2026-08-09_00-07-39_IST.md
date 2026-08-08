@@ -294,7 +294,7 @@ Interpretation:
 
 Working pieces include HTTP ingestion, event persistence, stream publication, a consumer shell, schema tables, REST incident reads, and WebSocket fan-out. The missing center of the slice is decisive: no detector produces a persisted signal or incident, no LangGraph path runs, and no frontend incident card exists.
 
-### M1 lunch-rush scenario
+### M1 lunch-rush scenario`
 
 **Not started as an integrated scenario.**
 

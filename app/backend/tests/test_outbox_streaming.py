@@ -4,11 +4,11 @@ import json
 from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.models import Event, Restaurant
-from app.ingestion.schemas import EventEnvelope
-from app.streaming.publisher import RedisPublisher
-from app.streaming.outbox_worker import process_outbox
-from app.streaming.consumer import start_redis_consumer
+from src.db.models import Event, Restaurant
+from src.ingestion.schemas import EventEnvelope
+from src.streaming.publisher import RedisPublisher
+from src.streaming.outbox_worker import process_outbox
+from src.streaming.consumer import start_redis_consumer
 from tests.conftest import MockRedisClient
 
 VALID_EVENT_DICT: dict[str, Any] = {
@@ -65,7 +65,7 @@ async def test_transactional_outbox_and_stream_pipeline(
     publisher = RedisPublisher(mock_redis)
     # We patch SessionLocal inside outbox_worker to yield our transactional db_session
     # so it targets the in-memory test database instead of production
-    import app.streaming.outbox_worker
+    import src.streaming.outbox_worker
     from unittest.mock import patch
 
     # We create a mock context manager for session
