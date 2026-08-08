@@ -80,7 +80,7 @@ async def test_transactional_outbox_and_stream_pipeline(
             pass
 
     with patch.object(
-        app.streaming.outbox_worker,
+        src.streaming.outbox_worker,
         "SessionLocal",
         return_value=AsyncContextManagerMock(db_session),
     ):
@@ -99,22 +99,19 @@ async def test_transactional_outbox_and_stream_pipeline(
     assert payload["event_id"] == "evt_outbox_777"
     assert payload["restaurant_id"] == "store_17"
 
-    # 6. Verify Redis Stream Consumer reads and acknowledges the message
-    # Start consumer briefly and process message
-    # We will invoke start_redis_consumer and simulate one loop iteration.
-    # To run start_redis_consumer without it looping infinitely, we can run it in a task and cancel it,
-    # or mock/simulate the run. Let's run a short task.
-    consumer_task = asyncio.create_task(start_redis_consumer(mock_redis))
-
-    # Allow task execution time slice
-    await asyncio.sleep(0.2)
-
-    # Cancel background consumer task
-    consumer_task.cancel()
-    try:
-        await consumer_task
-    except asyncio.CancelledError:
-        pass
+    # 6. Verify Redis Stream Consumer reads and acknowledges the message.
+    # Patch SessionLocal so detection pipeline uses the test DB session.
+    with patch(
+        "src.intelligence.pipeline.SessionLocal",
+        return_value=AsyncContextManagerMock(db_session),
+    ):
+        consumer_task = asyncio.create_task(start_redis_consumer(mock_redis))
+        await asyncio.sleep(0.2)
+        consumer_task.cancel()
+        try:
+            await consumer_task
+        except asyncio.CancelledError:
+            pass
 
     # Verify message is acknowledged and read from the mock stream
     assert (

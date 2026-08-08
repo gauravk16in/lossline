@@ -16,3 +16,5 @@ httpx>=0.27.0
 black>=24.2.0
 flake8>=7.0.0
 mypy>=1.9.0
+# Installable from repo root: pip install -e "packages/intelligence[dev]"
+lossline-intelligence>=0.1.0

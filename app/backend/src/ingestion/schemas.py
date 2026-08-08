@@ -8,11 +8,13 @@ class EventSource(str, Enum):
     INVENTORY = "inventory"
     DELIVERY = "delivery"
     REVIEWS = "reviews"
+    KDS = "kds"
 
 class EventType(str, Enum):
     ORDER_CREATED = "order.created"
     ORDER_COMPLETED = "order.completed"
     INVENTORY_UPDATED = "inventory.updated"
+    PREPARATION_COMPLETED = "preparation.completed"
     DELIVERY_HANDOFF_COMPLETED = "delivery.handoff_completed"
     ORDER_CANCELLED = "order.cancelled"
     REVIEW_RECEIVED = "review.received"
@@ -50,6 +52,10 @@ class InventoryUpdatedData(BaseModel):
     previous_qty: float = Field(..., ge=0)
     new_qty: float = Field(..., ge=0)
     unit: str = Field(..., min_length=1)
+
+class PreparationCompletedData(BaseModel):
+    order_id: str = Field(..., min_length=1)
+    duration_seconds: float = Field(..., ge=0)
 
 class DeliveryHandoffCompletedData(BaseModel):
     order_id: str = Field(..., min_length=1)
@@ -112,6 +118,8 @@ class EventEnvelope(BaseModel):
                 OrderCompletedData(**d)
             elif et == EventType.INVENTORY_UPDATED:
                 InventoryUpdatedData(**d)
+            elif et == EventType.PREPARATION_COMPLETED:
+                PreparationCompletedData(**d)
             elif et == EventType.DELIVERY_HANDOFF_COMPLETED:
                 DeliveryHandoffCompletedData(**d)
             elif et == EventType.ORDER_CANCELLED:

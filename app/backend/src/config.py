@@ -20,7 +20,20 @@ class Settings(BaseSettings):
     # Redis settings
     REDIS_URL: str = Field(default="redis://localhost:6379/0")
 
-    # (Optional) LLM & Tracing configurations
+    # Intelligence pipeline (CONFIG_DEFAULT — not business facts)
+    WINDOW_MINUTES: int = Field(default=30)
+    WINDOW_SLIDE_MINUTES: int = Field(default=5)
+    BASELINE_HISTORY_WINDOWS: int = Field(default=4)
+    INCIDENT_DEDUP_MINUTES: int = Field(default=60)
+    # M0 fixture baseline cancellation rate when history is sparse
+    M0_FIXTURE_CANCELLATION_RATE: float = Field(default=0.07)
+    M0_FIXTURE_ORDER_COUNT: float = Field(default=18.0)
+    M0_FIXTURE_AVG_PREP_MINUTES: float = Field(default=12.0)
+    M0_FIXTURE_AVG_HANDOFF_MINUTES: float = Field(default=3.0)
+    CONFIG_VERSION: str = Field(default="config.v1")
+
+    # (Optional) LLM & Tracing configurations — LangGraph deferred until
+    # deterministic detection → correlate → recommend path is proven.
     LLM_API_KEY: str | None = Field(default=None)
     LANGSMITH_API_KEY: str | None = Field(default=None)
     LANGCHAIN_TRACING_V2: bool = Field(default=False)

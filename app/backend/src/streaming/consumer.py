@@ -1,119 +1,28 @@
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 from redis.asyncio import Redis
-from sqlalchemy import select
 from src.ingestion.schemas import EventEnvelope
-from src.db.session import SessionLocal
-from src.db.models import Incident, Recommendation
-from src.realtime.websocket import manager
+from src.intelligence.pipeline import run_detection_pipeline
 
 from typing import cast, Any, List as TList, Tuple as TTuple, Dict as TDict
 
 logger = logging.getLogger(__name__)
 
 
-async def process_event_in_pipeline(envelope: EventEnvelope):
-    """
-    Downstream processing. Detects stockout events to raise incidents,
-    and positive reviews to resolve active approved incidents.
+async def process_event_in_pipeline(envelope: EventEnvelope) -> None:
+    """Hand a streamed event to the deterministic intelligence pipeline.
+
+    Derived Postgres writes commit inside ``run_detection_pipeline`` before
+    the caller acknowledges the Redis stream message.
     """
     logger.info(
-        f"[Detection Pipeline] Ingested {envelope.event_type} "
-        f"for restaurant {envelope.restaurant_id}. Event ID: {envelope.event_id}"
+        "[Detection Pipeline] Ingested %s for restaurant %s. Event ID: %s",
+        envelope.event_type,
+        envelope.restaurant_id,
+        envelope.event_id,
     )
-
-    # 1. Detection rule: MEGHANA_SPECIAL_CHICKEN_BIRYANI stockout (quantity drops to 0.0)
-    if envelope.event_type.value == "inventory.updated" and envelope.data.get("new_qty") == 0.0:
-        sku = envelope.data.get("sku") or envelope.entity_id
-        logger.info(f"[Detection Pipeline] STOCKOUT DETECTED for {sku}. Checking for existing incidents...")
-        
-        async with SessionLocal() as db:
-            stmt = select(Incident).filter(
-                Incident.restaurant_id == envelope.restaurant_id,
-                Incident.incident_type == "STOCKOUT_DEGRADATION",
-                Incident.status != "RESOLVED"
-            )
-            result = await db.execute(stmt)
-            existing_incident = result.scalars().first()
-            
-            if not existing_incident:
-                now = datetime.now(timezone.utc)
-                # Create Incident
-                incident = Incident(
-                    restaurant_id=envelope.restaurant_id,
-                    incident_type="STOCKOUT_DEGRADATION",
-                    status="AWAITING_APPROVAL",
-                    severity=4.0,
-                    confidence=0.95,
-                    confidence_components={"inventory": 1.0, "volume": 0.9},
-                    probable_cause=f"Inventory Stockout of {sku} due to surge",
-                    explanation=f"Demand surged 2.5x causing inventory stockout of {sku} and wait times to exceed 15 mins.",
-                    revenue_at_risk=4500.0,
-                    currency="INR",
-                    window_start=now,
-                    window_end=now,
-                    correlation_rule_version="1.0",
-                    config_version="1.0",
-                    created_at=now
-                )
-                db.add(incident)
-                await db.flush()  # get incident.id
-                
-                # Create Recommendation
-                recommendation = Recommendation(
-                    incident_id=incident.id,
-                    rule_id="RULE_STOCKOUT_THROTTLE",
-                    action_text=f"Limit delivery order rate for {sku} and increase preparation buffers.",
-                    expected_impact={"revenue_saved": 3200.0, "time_to_recover": "15m"},
-                    urgency="HIGH",
-                    risk_tier="LOW",
-                    source="RULE",
-                    expires_at=now,
-                    created_at=now
-                )
-                db.add(recommendation)
-                await db.commit()
-                logger.info(f"[Detection Pipeline] Created incident {incident.id} and recommendation {recommendation.id}")
-                
-                # Broadcast WebSocket update
-                await manager.broadcast_transition(
-                    {
-                        "message_id": f"msg_inc_new_{incident.id}",
-                        "incident_id": incident.id,
-                        "stage": "AWAITING_APPROVAL",
-                        "status": "success",
-                        "occurred_at": now.isoformat()
-                    }
-                )
-
-    # 2. Resolution rule: Customer positive review received in recovery phase
-    elif envelope.event_type.value == "review.received" and envelope.data.get("rating", 0) >= 4.0:
-        logger.info(f"[Detection Pipeline] Positive review detected. Checking to resolve active approved incidents...")
-        async with SessionLocal() as db:
-            stmt = select(Incident).filter(
-                Incident.restaurant_id == envelope.restaurant_id,
-                Incident.status == "ACTION_APPROVED"
-            )
-            result = await db.execute(stmt)
-            incident = result.scalars().first()
-            
-            if incident:
-                logger.info(f"[Detection Pipeline] Recovery verified. Resolving incident {incident.id}...")
-                incident.status = "RESOLVED"
-                await db.commit()
-                
-                # Broadcast transition
-                await manager.broadcast_transition(
-                    {
-                        "message_id": f"msg_inc_res_{incident.id}",
-                        "incident_id": incident.id,
-                        "stage": "RESOLVED",
-                        "status": "success",
-                        "occurred_at": datetime.now(timezone.utc).isoformat()
-                    }
-                )
+    await run_detection_pipeline(envelope)
 
 
 async def start_redis_consumer(
@@ -197,18 +106,18 @@ async def start_redis_consumer(
                             payload_dict = json.loads(payload_str)
                             envelope = EventEnvelope(**payload_dict)
 
-                            # Process event in downstream logic
+                            # Process event — derived state committed before ACK
                             await process_event_in_pipeline(envelope)
 
                             # Acknowledge the message upon successful execution
                             await redis_client.xack(stream_name, group_name, msg_id)
                         except Exception as inner_err:
+                            # TODO(reliability): bounded retries + named DLQ before ACK.
+                            # Current behavior mirrors prior scaffold to avoid poison blocks.
                             logger.error(
                                 f"Failed to process message {msg_id}. "
                                 f"Acknowledging to prevent poison block. Error: {inner_err}"
                             )
-                            # In production we would publish to a dead-letter queue (DLQ)
-                            # to investigate further, and xack to not block.
                             await redis_client.xack(stream_name, group_name, msg_id)
 
             except Exception as loop_err:
