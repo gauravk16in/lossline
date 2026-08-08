@@ -5,11 +5,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
 
-from app.config import settings
-from app.api.endpoints import router
-from app.streaming.publisher import RedisPublisher
-from app.streaming.outbox_worker import start_outbox_worker
-from app.streaming.consumer import start_redis_consumer
+from src.config import settings
+from src.api.endpoints import router
+from src.streaming.publisher import RedisPublisher
+from src.streaming.outbox_worker import start_outbox_worker
+from src.streaming.consumer import start_redis_consumer
 
 # Setup logging
 logging.basicConfig(

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from math import isfinite
 
 from lossline_intelligence.models.incident import IncidentCandidate, IncidentType
 from lossline_intelligence.recommendations.playbooks import (
     CONFIDENCE_THRESHOLD,
+    ExpectedEffect,
     PLAYBOOKS,
     Playbook,
     RiskLevel,
@@ -31,7 +33,7 @@ class Recommendation:
     rationale: str
     urgency: str
     risk_level: RiskLevel
-    expected_effect: tuple
+    expected_effect: tuple[ExpectedEffect, ...]
     source: str
     rule_id: str
     rule_version: str
@@ -68,6 +70,9 @@ def recommend(
     confidence: float,
 ) -> Recommendation | RecommendationAbstention:
     """Return a rule-based recommendation or a deterministic abstention."""
+    if not isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        raise ValueError("confidence must be finite and between 0 and 1")
+
     if confidence < CONFIDENCE_THRESHOLD:
         return RecommendationAbstention(
             candidate_id=candidate.candidate_id,

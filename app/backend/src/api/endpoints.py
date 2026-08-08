@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
-from app.db.session import get_db_session
-from app.db.models import (
+from src.db.session import get_db_session
+from src.db.models import (
     Restaurant,
     Event,
     Incident,
@@ -21,8 +21,8 @@ from app.db.models import (
     incident_signals,
     Signal,
 )
-from app.ingestion.schemas import EventEnvelope
-from app.realtime.websocket import manager
+from src.ingestion.schemas import EventEnvelope
+from src.realtime.websocket import manager
 
 logger = logging.getLogger(__name__)
 

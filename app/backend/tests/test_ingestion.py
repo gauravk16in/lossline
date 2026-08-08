@@ -1,7 +1,7 @@
 import pytest
 from httpx import AsyncClient, ASGITransport
-from app.main import app
-from app.ingestion.schemas import EventEnvelope, EventSource, EventType
+from src.main import app
+from src.ingestion.schemas import EventEnvelope, EventSource, EventType
 
 # Example valid events for tests
 VALID_ORDER_CREATED = {

@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from redis.asyncio import Redis
-from app.ingestion.schemas import EventEnvelope
+from src.ingestion.schemas import EventEnvelope
 
 from typing import cast, Any, List as TList, Tuple as TTuple, Dict as TDict
 

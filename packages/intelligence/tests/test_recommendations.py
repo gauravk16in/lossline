@@ -145,3 +145,9 @@ def test_confidence_does_not_alter_risk_level() -> None:
     assert isinstance(medium, Recommendation) and isinstance(high, Recommendation)
     assert medium.risk_level == high.risk_level == RiskLevel.MEDIUM
     assert medium.urgency == high.urgency
+
+
+@pytest.mark.parametrize("confidence", [-0.01, 1.01, float("nan"), float("inf")])
+def test_invalid_confidence_is_rejected(confidence: float) -> None:
+    with pytest.raises(ValueError, match="confidence must be finite"):
+        recommend(_overload_candidate(), confidence=confidence)

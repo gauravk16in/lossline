@@ -1,6 +1,6 @@
 from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from app.config import settings
+from src.config import settings
 
 # engine setup optimized for Neon connection pooler (PgBouncer transaction mode)
 # by setting prepared_statement_cache_size=0 inside connect_args
