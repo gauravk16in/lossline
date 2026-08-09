@@ -19,9 +19,10 @@ def upgrade() -> None:
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False))
     op.create_index("ix_organizations_clerk_organization_id", "organizations", ["clerk_organization_id"], unique=True)
-    op.add_column("restaurants", sa.Column("organization_id", sa.Integer(), nullable=True))
-    op.create_foreign_key("fk_restaurants_organization", "restaurants", "organizations", ["organization_id"], ["id"])
-    op.create_index("ix_restaurants_organization_id", "restaurants", ["organization_id"])
+    with op.batch_alter_table("restaurants") as batch:
+        batch.add_column(sa.Column("organization_id", sa.Integer(), nullable=True))
+        batch.create_foreign_key("fk_restaurants_organization", "organizations", ["organization_id"], ["id"])
+        batch.create_index("ix_restaurants_organization_id", ["organization_id"])
     op.create_table("integration_credentials",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("public_prefix", sa.String(), nullable=False, unique=True),
@@ -51,8 +52,9 @@ def downgrade() -> None:
     op.drop_index("ix_integration_credentials_organization_id", table_name="integration_credentials")
     op.drop_index("ix_integration_credentials_public_prefix", table_name="integration_credentials")
     op.drop_table("integration_credentials")
-    op.drop_index("ix_restaurants_organization_id", table_name="restaurants")
-    op.drop_constraint("fk_restaurants_organization", "restaurants", type_="foreignkey")
-    op.drop_column("restaurants", "organization_id")
+    with op.batch_alter_table("restaurants") as batch:
+        batch.drop_index("ix_restaurants_organization_id")
+        batch.drop_constraint("fk_restaurants_organization", type_="foreignkey")
+        batch.drop_column("organization_id")
     op.drop_index("ix_organizations_clerk_organization_id", table_name="organizations")
     op.drop_table("organizations")

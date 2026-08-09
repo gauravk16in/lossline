@@ -1,5 +1,8 @@
 import asyncio
 import logging
+import json
+import time
+import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -100,6 +103,8 @@ app = FastAPI(
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        started = time.monotonic()
+        request_id = request.headers.get("x-request-id") or uuid.uuid4().hex
         if settings.SERVERLESS_MODE and (
             request.url.path.startswith("/api/v1/demo/") or request.url.path == "/api/v1/ws"
         ):
@@ -110,7 +115,14 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         body = await request.body()
         if len(body) > settings.MAX_REQUEST_BYTES:
             return JSONResponse({"detail": "Request body exceeds 256 KiB limit"}, status_code=413)
-        return await call_next(request)
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        logger.info(json.dumps({"event": "request_complete", "request_id": request_id,
+            "method": request.method, "path": request.url.path, "status": response.status_code,
+            "duration_ms": round((time.monotonic() - started) * 1000, 2),
+            "organization_id": getattr(request.state, "organization_id", None),
+            "user_id": getattr(request.state, "auth_subject", None)}))
+        return response
 
 
 app.add_middleware(RequestSizeLimitMiddleware)

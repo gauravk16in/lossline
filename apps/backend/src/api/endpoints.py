@@ -436,7 +436,7 @@ async def review_predictive_decision(decision_id: str, payload: PredictiveManage
         except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=f"Predictive checkpoint conflict: {exc}")
     row.manager_decision = payload.decision
-    row.manager_id = user.subject
+    row.manager_id = user.subject if user is not None else (payload.manager_id or "local_manager")
     row.manager_note = payload.manager_note
     row.idempotency_key = payload.idempotency_key.strip()
     row.decided_at = datetime.datetime.now(datetime.timezone.utc)
@@ -610,7 +610,7 @@ async def submit_decision(
         decision=payload.decision,
         suggested_text=rec.action_text,
         final_text=payload.final_action_text or rec.action_text,
-        decided_by=user.subject,
+        decided_by=user.subject if user is not None else "local_manager",
         manager_note=payload.manager_note,
         idempotency_key=payload.idempotency_key,
         decided_at=now_utc,
