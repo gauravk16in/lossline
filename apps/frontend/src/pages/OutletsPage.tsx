@@ -5,7 +5,6 @@ import {
   Paper,
   Skeleton,
   Alert,
-  Chip,
   Grid,
 } from '@mui/material';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
@@ -13,7 +12,6 @@ import { faStore } from '@fortawesome/free-solid-svg-icons';
 import { PageContainer } from '../components/layout/PageContainer';
 import { OutletHealthList } from '../components/outlets/OutletHealthList';
 import type { Restaurant, Incident } from '../types/api';
-import { formatOutletName } from '../components/utils/format';
 
 interface OutletsPageProps {
   restaurants: Restaurant[];

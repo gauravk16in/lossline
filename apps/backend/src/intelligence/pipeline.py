@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from dataclasses import fields
 from decimal import Decimal
+from contextlib import asynccontextmanager
 from enum import Enum
 from collections.abc import Mapping
 
@@ -172,13 +173,22 @@ async def _resolve_currency(db: AsyncSession, restaurant_id: str) -> str:
     return restaurant.currency if restaurant and restaurant.currency else "INR"
 
 
-async def run_detection_pipeline(envelope: EventEnvelope) -> None:
+@asynccontextmanager
+async def _pipeline_session(existing=None):
+    if existing is not None:
+        yield existing
+    else:
+        async with SessionLocal() as session:
+            yield session
+
+
+async def run_detection_pipeline(envelope: EventEnvelope, *, db_session=None) -> None:
     """Process one streamed event through deterministic intelligence + persist."""
     restaurant_id = envelope.restaurant_id
     outlet_id = restaurant_id  # identity mapping at the intelligence boundary
     window_start, window_end = analysis_window(envelope.occurred_at)
 
-    async with SessionLocal() as db:
+    async with _pipeline_session(db_session) as db:
         current_events = await load_normalized_events(
             db,
             restaurant_id=restaurant_id,

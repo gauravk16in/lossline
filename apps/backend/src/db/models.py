@@ -276,3 +276,162 @@ class ScenarioRun(Base):
         default=lambda: datetime.datetime.now(datetime.timezone.utc),
     )
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# Predictive artifacts are additive during reactive/predictive coexistence.
+# Each row stores queryable identity/scope plus the complete validated contract payload.
+class PredictiveFeatureSnapshot(Base):
+    __tablename__ = "predictive_feature_snapshots"
+    snapshot_id = Column(String, primary_key=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    sku_id = Column(String, nullable=False)
+    service_window = Column(String, nullable=False)
+    prediction_as_of = Column(DateTime(timezone=True), nullable=False)
+    window_start = Column(DateTime(timezone=True), nullable=False)
+    window_end = Column(DateTime(timezone=True), nullable=False)
+    registry_version = Column(String, nullable=False)
+    fingerprint = Column(String, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class ForecastRecord(Base):
+    __tablename__ = "forecast_results"
+    forecast_id = Column(String, primary_key=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    sku_id = Column(String, nullable=False)
+    service_window = Column(String, nullable=False, index=True)
+    prediction_as_of = Column(DateTime(timezone=True), nullable=False)
+    window_start = Column(DateTime(timezone=True), nullable=False, index=True)
+    window_end = Column(DateTime(timezone=True), nullable=False)
+    point_demand = Column(Numeric(18, 4), nullable=False)
+    lower_demand = Column(Numeric(18, 4), nullable=False)
+    upper_demand = Column(Numeric(18, 4), nullable=False)
+    model_version = Column(String, nullable=False)
+    feature_snapshot_id = Column(String, ForeignKey("predictive_feature_snapshots.snapshot_id"), nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)
+
+
+class InventoryProjectionRecord(Base):
+    __tablename__ = "inventory_projections"
+    projection_id = Column(String, primary_key=True)
+    forecast_id = Column(String, ForeignKey("forecast_results.forecast_id"), nullable=False, index=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    sku_id = Column(String, nullable=False)
+    shortage_point = Column(Numeric(18, 4), nullable=False)
+    stockout_risk = Column(Boolean, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class CapacityProjectionRecord(Base):
+    __tablename__ = "capacity_projections"
+    projection_id = Column(String, primary_key=True)
+    forecast_id = Column(String, nullable=False, index=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    utilization_point = Column(Numeric(18, 4), nullable=False)
+    risk_tier = Column(String, nullable=False)
+    overloaded = Column(Boolean, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class RiskCandidateRecord(Base):
+    __tablename__ = "risk_candidates"
+    risk_id = Column(String, primary_key=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    forecast_id = Column(String, nullable=False, index=True)
+    risk_type = Column(String, nullable=False)
+    severity = Column(String, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class DriverEvidenceRecord(Base):
+    __tablename__ = "driver_evidence"
+    driver_id = Column(String, primary_key=True)
+    forecast_id = Column(String, nullable=False, index=True)
+    feature_id = Column(String, nullable=False)
+    rank = Column(Integer, nullable=False)
+    direction = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class ForecastDossierRecord(Base):
+    __tablename__ = "forecast_dossiers"
+    dossier_id = Column(String, primary_key=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    service_window = Column(String, nullable=False)
+    window_start = Column(DateTime(timezone=True), nullable=False)
+    window_end = Column(DateTime(timezone=True), nullable=False)
+    dossier_version = Column(String, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)
+
+
+class PredictiveDecisionRecord(Base):
+    __tablename__ = "predictive_decisions"
+    decision_id = Column(String, primary_key=True)
+    dossier_id = Column(String, ForeignKey("forecast_dossiers.dossier_id"), nullable=False, index=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    action = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="AWAITING_MANAGER_REVIEW")
+    approval_required = Column(Boolean, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+    manager_decision = Column(String, nullable=True)
+    manager_id = Column(String, nullable=True)
+    manager_note = Column(String, nullable=True)
+    idempotency_key = Column(String, unique=True, nullable=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class GuardResultRecord(Base):
+    __tablename__ = "guard_results"
+    guard_result_id = Column(String, primary_key=True)
+    decision_id = Column(String, ForeignKey("predictive_decisions.decision_id"), nullable=False, index=True)
+    disposition = Column(String, nullable=False)
+    valid = Column(Boolean, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class DecisionTraceRecord(Base):
+    __tablename__ = "decision_traces"
+    trace_id = Column(String, primary_key=True)
+    dossier_id = Column(String, ForeignKey("forecast_dossiers.dossier_id"), nullable=False, index=True)
+    decision_id = Column(String, ForeignKey("predictive_decisions.decision_id"), nullable=True)
+    guard_result_id = Column(String, ForeignKey("guard_results.guard_result_id"), nullable=True)
+    checkpoint_thread_id = Column(String, nullable=True)
+    payload = Column(JSONB_TYPE, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)
+
+
+class ForecastModelArtifactRecord(Base):
+    __tablename__ = "forecast_model_artifacts"
+    artifact_id = Column(String, primary_key=True)
+    model_version = Column(String, nullable=False)
+    accepted = Column(Boolean, nullable=False)
+    training_cutoff = Column(DateTime(timezone=True), nullable=False)
+    checksum = Column(String, nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)
+
+
+class ActualOutcomeRecord(Base):
+    __tablename__ = "actual_outcomes"
+    outcome_id = Column(String, primary_key=True)
+    forecast_id = Column(String, ForeignKey("forecast_results.forecast_id"), nullable=False, unique=True, index=True)
+    outlet_id = Column(String, ForeignKey("restaurants.id"), nullable=False, index=True)
+    sku_id = Column(String, nullable=False)
+    service_window = Column(String, nullable=False)
+    status = Column(String, nullable=False)
+    matured_at = Column(DateTime(timezone=True), nullable=False)
+    payload = Column(JSONB_TYPE, nullable=False)
+
+
+class PredictiveEvaluationRecord(Base):
+    __tablename__ = "predictive_evaluations"
+    evaluation_id = Column(String, primary_key=True)
+    evaluation_type = Column(String, nullable=False)
+    forecast_id = Column(String, ForeignKey("forecast_results.forecast_id"), nullable=False, index=True)
+    outcome_id = Column(String, ForeignKey("actual_outcomes.outcome_id"), nullable=False, index=True)
+    decision_id = Column(String, ForeignKey("predictive_decisions.decision_id"), nullable=True)
+    payload = Column(JSONB_TYPE, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)

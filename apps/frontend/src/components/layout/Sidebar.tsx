@@ -15,7 +15,7 @@ import {
   faTriangleExclamation,
   faStore,
   faCheck,
-  faGear,
+  faChartLine,
 } from '@fortawesome/free-solid-svg-icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ConnectionBadge } from '../common/ConnectionBadge';
@@ -43,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItems: NavItem[] = [
     { label: 'Overview', path: '/', icon: faGaugeHigh },
+    { label: 'Predictive Today', path: '/predictive', icon: faChartLine },
     {
       label: 'Incidents',
       path: '/incidents',

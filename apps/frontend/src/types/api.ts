@@ -108,3 +108,99 @@ export interface DecisionPayload {
   manager_note?: string;
   idempotency_key: string;
 }
+
+export interface PredictiveForecast {
+  forecast_id: string;
+  outlet_id: string;
+  sku_id: string;
+  service_window: string;
+  prediction_as_of: string;
+  window_start: string;
+  window_end: string;
+  point_demand: string;
+  lower_demand: string;
+  upper_demand: string;
+  model_version?: string;
+  forecast_version?: string;
+  interval_method: string;
+  feature_snapshot_id: string;
+  data_sufficient: boolean;
+}
+
+export interface PredictiveInventoryProjection {
+  projection_id: string;
+  forecast_id: string;
+  sku_id: string;
+  ending_inventory_point: number;
+  shortage_point: number;
+  surplus_point: number;
+  stockout_risk: boolean;
+  shortage_severity: string;
+  stockout_window_fraction: string | null;
+}
+
+export interface PredictiveCapacityProjection {
+  projection_id: string;
+  forecast_id: string;
+  utilization_point: string;
+  utilization_lower: string;
+  utilization_upper: string;
+  risk_tier: string;
+  overloaded: boolean;
+  mean_preparation_minutes: string;
+}
+
+export interface PredictiveDriver {
+  driver_id: string;
+  forecast_id: string;
+  feature_id: string;
+  rank: number;
+  direction: 'INCREASE' | 'DECREASE' | 'NEUTRAL';
+  method: string;
+  score: string;
+  contribution: string | null;
+  wording_limit: string;
+}
+
+export interface PredictiveDecisionView {
+  decision: {
+    decision_id: string;
+    action: string;
+    quantity: string | null;
+    unit: string | null;
+    approval_required: boolean;
+  };
+  status: string;
+  manager_decision: string | null;
+}
+
+export interface PredictiveActualOutcome {
+  outcome_id: string;
+  forecast_id: string;
+  actual_demand: string | null;
+  fulfilled_quantity: string | null;
+  unfulfilled_quantity: string | null;
+  status: 'AVAILABLE' | 'CENSORED' | 'MISSING';
+  matured_at: string;
+}
+
+export interface PredictiveToday {
+  outlet_id: string;
+  service_window: string;
+  forecasts: PredictiveForecast[];
+  inventory_projections: PredictiveInventoryProjection[];
+  capacity_projections: PredictiveCapacityProjection[];
+  risks: Array<Record<string, unknown>>;
+  drivers: PredictiveDriver[];
+  dossiers: Array<Record<string, unknown>>;
+  decisions: PredictiveDecisionView[];
+  outcomes: PredictiveActualOutcome[];
+  synthetic: boolean;
+}
+
+export interface PredictiveAnalyticsSummary {
+  forecast_count: number;
+  risk_count: number;
+  pending_review_count: number;
+  synthetic: boolean;
+}

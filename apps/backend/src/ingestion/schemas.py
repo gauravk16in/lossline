@@ -13,6 +13,7 @@ class EventSource(str, Enum):
     DELIVERY = "delivery"
     REVIEWS = "reviews"
     KDS = "kds"
+    SIMULATOR = "simulator"
 
 
 class EventType(str, Enum):
@@ -22,6 +23,8 @@ class EventType(str, Enum):
     DELIVERY_HANDOFF_COMPLETED = "delivery.handoff_completed"
     ORDER_CANCELLED = "order.cancelled"
     REVIEW_RECEIVED = "review.received"
+    PREDICTIVE_WINDOW_SCHEDULED = "predictive.window_scheduled"
+    DEMAND_WINDOW_OBSERVED = "demand.window_observed"
 
 
 class EntitySchema(ContractModel):
@@ -79,6 +82,71 @@ class ReviewReceivedData(ContractModel):
     language: str = Field(default="en", min_length=2)
 
 
+class PredictiveSkuPlanData(ContractModel):
+    sku_id: str = Field(..., min_length=1)
+    base_demand: float = Field(..., ge=0)
+    opening_inventory: int = Field(..., ge=0)
+    replenishment_quantity: int = Field(default=0, ge=0)
+    workload_minutes: float = Field(..., gt=0)
+
+
+class PredictiveWindowScheduledData(ContractModel):
+    service_window: str = Field(..., min_length=1)
+    window_start: datetime
+    window_end: datetime
+    available_capacity_minutes: float = Field(..., gt=0)
+    data_quality: float = Field(..., ge=0, le=1)
+    context: Dict[str, Any]
+    skus: tuple[PredictiveSkuPlanData, ...] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def valid_window_and_skus(self):
+        if self.window_start.tzinfo is None or self.window_end.tzinfo is None:
+            raise ValueError("predictive window timestamps must be timezone-aware")
+        if self.window_end <= self.window_start:
+            raise ValueError("window_end must be after window_start")
+        ids = [item.sku_id for item in self.skus]
+        if len(ids) != len(set(ids)): raise ValueError("scheduled SKU IDs must be unique")
+        return self
+
+
+class ObservedSkuData(ContractModel):
+    sku_id: str = Field(..., min_length=1)
+    actual_demand: int = Field(..., ge=0)
+    fulfilled_quantity: int = Field(..., ge=0)
+    unfulfilled_quantity: int = Field(..., ge=0)
+    ending_inventory: int
+    stockout: bool
+    workload_minutes: float = Field(..., gt=0)
+    opening_inventory: int = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def conserve_demand(self):
+        if self.fulfilled_quantity + self.unfulfilled_quantity != self.actual_demand:
+            raise ValueError("fulfilled plus unfulfilled must equal actual demand")
+        return self
+
+
+class DemandWindowObservedData(ContractModel):
+    service_window: str = Field(..., min_length=1)
+    window_start: datetime
+    window_end: datetime
+    capacity_utilization: float = Field(..., ge=0)
+    available_capacity_minutes: float = Field(..., gt=0)
+    data_quality: float = Field(..., ge=0, le=1)
+    context: Dict[str, Any]
+    skus: tuple[ObservedSkuData, ...] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def valid_window_and_skus(self):
+        if self.window_start.tzinfo is None or self.window_end.tzinfo is None:
+            raise ValueError("observed window timestamps must be timezone-aware")
+        if self.window_end <= self.window_start: raise ValueError("window_end must be after window_start")
+        ids = [item.sku_id for item in self.skus]
+        if len(ids) != len(set(ids)): raise ValueError("observed SKU IDs must be unique")
+        return self
+
+
 class EventEnvelope(ContractModel):
     schema_version: str = Field(default="1.0")
     event_id: str = Field(..., min_length=1)
@@ -133,6 +201,10 @@ class EventEnvelope(ContractModel):
                 OrderCancelledData(**d)
             elif et == EventType.REVIEW_RECEIVED:
                 ReviewReceivedData(**d)
+            elif et == EventType.PREDICTIVE_WINDOW_SCHEDULED:
+                PredictiveWindowScheduledData(**d)
+            elif et == EventType.DEMAND_WINDOW_OBSERVED:
+                DemandWindowObservedData(**d)
             else:
                 raise ValueError(f"Unrecognized event_type: {et}")
         except Exception as e:

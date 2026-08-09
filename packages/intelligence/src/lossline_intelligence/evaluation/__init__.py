@@ -41,4 +41,10 @@ __all__ = [
     "compute_metric_summary",
     "evaluate_rolling_origin",
 ]
+from lossline_intelligence.evaluation.agent import (
+    AgentAcceptance, AgentEvaluationCase, AgentEvaluationObservation,
+    AgentEvaluationReport, evaluate_operational_agent,
+)
 
+__all__ += ["AgentAcceptance", "AgentEvaluationCase", "AgentEvaluationObservation",
+    "AgentEvaluationReport", "evaluate_operational_agent"]

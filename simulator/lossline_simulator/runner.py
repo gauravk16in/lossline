@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timezone
 import httpx
 import websockets
+from simulator.lossline_simulator.predictive_runner import run_predictive_demo
 
 from simulator.lossline_simulator.scenarios.lunch_rush import generate_scenario_events
 
@@ -243,15 +244,29 @@ def main():
         default=42,
         help="Random seed for repeatable synthetic data generation (default: 42)",
     )
+    parser.add_argument("--scenario", choices=("reactive", "predictive"), default="reactive",
+        help="Run the reactive lunch rush or predictive seeded demo.")
+    parser.add_argument("--target-window-start", default="2026-09-09T13:00:00+00:00",
+        help="Predictive target window start as an aware ISO timestamp.")
 
     args = parser.parse_args()
 
     try:
-        asyncio.run(
-            run_simulation(
-                api_url=args.api_url.rstrip("/"), speed=args.speed, seed=args.seed
-            )
-        )
+        if args.scenario == "predictive":
+            async def predictive_main():
+                api_url = args.api_url.rstrip("/")
+                async with httpx.AsyncClient(timeout=30) as client:
+                    reset = await client.post(f"{api_url}/api/v1/demo/reset"); reset.raise_for_status()
+                    evidence = await run_predictive_demo(api_url=api_url, seed=args.seed,
+                        target_window_start=datetime.fromisoformat(args.target_window_start), client=client)
+                    logger.info("Predictive demo completed: %s", json.dumps({
+                        "forecast_count": len(evidence["cycle"]["forecast_ids"]),
+                        "outcome_count": len(evidence["outcome_ids"]),
+                        "evaluation_count": len(evidence["evaluations"]),
+                        "decision_status": evidence["review"]["status"]}, sort_keys=True))
+            asyncio.run(predictive_main())
+        else:
+            asyncio.run(run_simulation(api_url=args.api_url.rstrip("/"), speed=args.speed, seed=args.seed))
     except KeyboardInterrupt:
         logger.info("Simulation aborted by user.")
         sys.exit(0)

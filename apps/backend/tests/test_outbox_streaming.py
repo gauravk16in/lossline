@@ -8,7 +8,7 @@ from src.db.models import Event, Restaurant
 from src.ingestion.schemas import EventEnvelope
 from src.streaming.publisher import RedisPublisher
 from src.streaming.outbox_worker import process_outbox
-from src.streaming.consumer import start_redis_consumer
+from src.streaming.consumer import process_event_in_pipeline, start_redis_consumer
 from tests.conftest import MockRedisClient
 
 VALID_EVENT_DICT: dict[str, Any] = {
@@ -22,6 +22,47 @@ VALID_EVENT_DICT: dict[str, Any] = {
     "data": {"channel": "delivery", "amount": 100.0, "currency": "INR"},
     "metadata": {"synthetic": True, "scenario_id": "test_scenario"},
 }
+
+PREDICTIVE_EVENT_DICT: dict[str, Any] = {
+    "schema_version": "1.0",
+    "event_id": "evt_predictive_stream_1",
+    "restaurant_id": "store_17",
+    "source": "simulator",
+    "event_type": "predictive.window_scheduled",
+    "occurred_at": "2026-08-09T05:00:00Z",
+    "entity": {"type": "service_window", "id": "lunch_2026_08_09"},
+    "data": {
+        "service_window": "lunch",
+        "window_start": "2026-08-09T06:30:00Z",
+        "window_end": "2026-08-09T08:30:00Z",
+        "available_capacity_minutes": 240.0,
+        "data_quality": 1.0,
+        "context": {"day_of_week": "Sunday"},
+        "skus": [
+            {
+                "sku_id": "sku_biryani",
+                "base_demand": 20.0,
+                "opening_inventory": 15,
+                "replenishment_quantity": 0,
+                "workload_minutes": 4.0,
+            }
+        ],
+    },
+    "metadata": {"synthetic": True, "scenario_id": "predictive_demo"},
+}
+
+
+@pytest.mark.asyncio
+async def test_predictive_stream_copy_bypasses_reactive_pipeline() -> None:
+    from unittest.mock import AsyncMock, patch
+
+    envelope = EventEnvelope(**PREDICTIVE_EVENT_DICT)
+    with patch(
+        "src.streaming.consumer.run_detection_pipeline", new_callable=AsyncMock
+    ) as reactive_pipeline:
+        await process_event_in_pipeline(envelope)
+
+    reactive_pipeline.assert_not_awaited()
 
 
 @pytest.mark.asyncio

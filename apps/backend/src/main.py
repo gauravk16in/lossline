@@ -90,22 +90,6 @@ app.add_middleware(
 # Include API routes
 app.include_router(router)
 
-from fastapi.responses import HTMLResponse
-import os
-
-
-@app.get("/", response_class=HTMLResponse)
-async def serve_ui():
-    """
-    Serves the simple single-page testing UI from templates/index.html.
-    """
-    template_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
-    if os.path.exists(template_path):
-        with open(template_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "<h1>LOSSLine Test UI</h1><p>Template file not found at templates/index.html.</p>"
-
-
 @app.get("/health")
 async def health_check():
     """

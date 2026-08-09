@@ -8,6 +8,7 @@ import { IncidentsPage } from '../pages/IncidentsPage';
 import { IncidentDetailPage } from '../pages/IncidentDetailPage';
 import { OutletsPage } from '../pages/OutletsPage';
 import { ActionsPage } from '../pages/ActionsPage';
+import { PredictiveTodayPage } from '../pages/PredictiveTodayPage';
 import { useIncidents } from '../hooks/useIncidents';
 import { useRealtime } from '../hooks/useRealtime';
 import { api } from '../api/client';
@@ -60,6 +61,7 @@ function AppShell() {
               />
             }
           />
+          <Route path="/predictive" element={<PredictiveTodayPage restaurants={restaurants} restaurantsLoading={restaurantsLoading} />} />
           <Route
             path="/incidents"
             element={

@@ -7,7 +7,7 @@ import {
   Button,
 } from '@mui/material';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTriangleExclamation, faStore, faArrowRight } from '@fortawesome/free-solid-svg-icons';
+import { faStore, faArrowRight } from '@fortawesome/free-solid-svg-icons';
 import { useNavigate } from 'react-router-dom';
 import { SeverityChip } from '../common/SeverityChip';
 import { StatusChip } from '../common/StatusChip';

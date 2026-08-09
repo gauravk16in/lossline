@@ -4,6 +4,8 @@ import type {
   AnalyticsSummary,
   Outcome,
   DecisionPayload,
+  PredictiveToday,
+  PredictiveAnalyticsSummary,
 } from '../types/api';
 
 const BASE: string = import.meta.env.VITE_API_URL ?? '';
@@ -49,4 +51,10 @@ export const api = {
   verifyOutcome: (id: number) => request<Outcome>(`/api/v1/incidents/${id}/verify`, { method: 'POST' }),
 
   resetDemo: () => request<{ status: string; detail: string }>('/api/v1/demo/reset', { method: 'POST' }),
+
+  getPredictiveToday: (outletId: string, serviceWindow: string) =>
+    request<PredictiveToday>(`/api/v1/predictive/today/${encodeURIComponent(outletId)}/${encodeURIComponent(serviceWindow)}`),
+
+  getPredictiveSummary: () =>
+    request<PredictiveAnalyticsSummary>('/api/v1/predictive/analytics/summary'),
 };

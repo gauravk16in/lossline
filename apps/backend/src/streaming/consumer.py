@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from redis.asyncio import Redis
-from src.ingestion.schemas import EventEnvelope
+from src.ingestion.schemas import EventEnvelope, EventType
 from src.intelligence.pipeline import run_detection_pipeline
 from src.config import settings
 
@@ -17,6 +17,22 @@ async def process_event_in_pipeline(envelope: EventEnvelope) -> None:
     Derived Postgres writes commit inside ``run_detection_pipeline`` before
     the caller acknowledges the Redis stream message.
     """
+    if envelope.event_type in {
+        EventType.PREDICTIVE_WINDOW_SCHEDULED,
+        EventType.DEMAND_WINDOW_OBSERVED,
+    }:
+        # Predictive events are processed synchronously during ingestion so the
+        # simulator receives the generated decision/outcome metadata. Their
+        # outbox copies still flow through Redis for durable delivery, but must
+        # not enter the reactive detector pipeline.
+        logger.info(
+            "[Predictive Pipeline] Event %s already processed during ingestion; "
+            "acknowledging streamed copy. Event ID: %s",
+            envelope.event_type,
+            envelope.event_id,
+        )
+        return
+
     logger.info(
         "[Detection Pipeline] Ingested %s for restaurant %s. Event ID: %s",
         envelope.event_type,

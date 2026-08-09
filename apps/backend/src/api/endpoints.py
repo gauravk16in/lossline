@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from src.db.session import get_db_session
 from src.db.models import (
@@ -21,12 +21,26 @@ from src.db.models import (
     ScenarioRun,
     incident_signals,
     Signal,
+    ForecastRecord,
+    InventoryProjectionRecord,
+    CapacityProjectionRecord,
+    ForecastDossierRecord,
+    PredictiveDecisionRecord,
+    RiskCandidateRecord,
+    DecisionTraceRecord,
+    GuardResultRecord,
+    DriverEvidenceRecord,
+    PredictiveFeatureSnapshot,
+    ForecastModelArtifactRecord,
+    ActualOutcomeRecord,
+    PredictiveEvaluationRecord,
 )
-from src.ingestion.schemas import EventEnvelope
+from src.ingestion.schemas import EventEnvelope, EventType
 from src.realtime.websocket import manager
 from src.config import settings
 from src.demo.entities import DEMO_RESTAURANTS
 from src.intelligence.outcomes import verify_incident_outcome
+from src.intelligence.predictive_persistence import select_forecast_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -111,15 +125,28 @@ async def ingest_event(
         published_to_stream=False,
     )
     db.add(new_event)
+    await db.flush()
 
-    if settings.INLINE_PROCESSING:
+    predictive_result = None
+    if envelope.event_type == EventType.PREDICTIVE_WINDOW_SCHEDULED:
+        from src.intelligence.predictive_cycle import process_scheduled_window
+        predictive_result = await process_scheduled_window(db, envelope)
+    elif envelope.event_type == EventType.DEMAND_WINDOW_OBSERVED:
+        from src.intelligence.predictive_cycle import process_observed_window
+        outcome_ids = await process_observed_window(db, envelope)
+        predictive_result = {"outcome_ids": list(outcome_ids)}
+
+    if settings.INLINE_PROCESSING and envelope.event_type not in {
+        EventType.PREDICTIVE_WINDOW_SCHEDULED, EventType.DEMAND_WINDOW_OBSERVED,
+    }:
         # Local no-infrastructure mode: preserve durability before deriving state.
         await db.commit()
         from src.intelligence.pipeline import run_detection_pipeline
 
-        await run_detection_pipeline(envelope)
+        await run_detection_pipeline(envelope, db_session=db)
 
-    return {"event_id": envelope.event_id, "status": "accepted", "duplicate": False}
+    return {"event_id": envelope.event_id, "status": "accepted", "duplicate": False,
+        "predictive": predictive_result}
 
 
 @router.get("/restaurants")
@@ -176,6 +203,170 @@ class ScenarioRunPayload(BaseModel):
     scenario_id: str = "meghana_lunch_rush_v1"
     seed: int = 42
     speed: float = 120.0
+
+
+class PredictiveManagerReviewPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["APPROVE", "REJECT"]
+    manager_id: str
+    idempotency_key: str
+    manager_note: str | None = None
+
+
+@router.get("/predictive/forecasts/{outlet_id}/{service_window}")
+async def get_predictive_forecasts(outlet_id: str, service_window: str,
+    db: AsyncSession = Depends(get_db_session)):
+    rows = (await db.execute(select(ForecastRecord).where(
+        ForecastRecord.outlet_id == outlet_id,
+        ForecastRecord.service_window == service_window,
+    ).order_by(ForecastRecord.window_start.desc(), ForecastRecord.sku_id))).scalars().all()
+    return [row.payload for row in rows]
+
+
+@router.get("/predictive/today/{outlet_id}/{service_window}")
+async def get_predictive_today(outlet_id: str, service_window: str,
+    db: AsyncSession = Depends(get_db_session)):
+    forecasts = (await db.execute(select(ForecastRecord).where(
+        ForecastRecord.outlet_id == outlet_id,
+        ForecastRecord.service_window == service_window,
+    ).order_by(ForecastRecord.window_start, ForecastRecord.sku_id))).scalars().all()
+    forecast_ids = [row.forecast_id for row in forecasts]
+    inventories = [] if not forecast_ids else (await db.execute(select(InventoryProjectionRecord).where(
+        InventoryProjectionRecord.forecast_id.in_(forecast_ids)))).scalars().all()
+    capacities = [] if not forecast_ids else (await db.execute(select(CapacityProjectionRecord).where(
+        CapacityProjectionRecord.outlet_id == outlet_id,
+        CapacityProjectionRecord.forecast_id.in_(forecast_ids)))).scalars().all()
+    risks = [] if not forecast_ids else (await db.execute(select(RiskCandidateRecord).where(
+        RiskCandidateRecord.forecast_id.in_(forecast_ids)))).scalars().all()
+    drivers = [] if not forecast_ids else (await db.execute(select(DriverEvidenceRecord).where(
+        DriverEvidenceRecord.forecast_id.in_(forecast_ids)).order_by(DriverEvidenceRecord.rank))).scalars().all()
+    dossiers = (await db.execute(select(ForecastDossierRecord).where(
+        ForecastDossierRecord.outlet_id == outlet_id,
+        ForecastDossierRecord.service_window == service_window).order_by(
+        ForecastDossierRecord.created_at.desc()))).scalars().all()
+    dossier_ids = [row.dossier_id for row in dossiers]
+    decisions = [] if not dossier_ids else (await db.execute(select(PredictiveDecisionRecord).where(
+        PredictiveDecisionRecord.dossier_id.in_(dossier_ids)))).scalars().all()
+    outcomes = [] if not forecast_ids else (await db.execute(select(ActualOutcomeRecord).where(
+        ActualOutcomeRecord.forecast_id.in_(forecast_ids)))).scalars().all()
+    return {"outlet_id": outlet_id, "service_window": service_window,
+        "forecasts": [row.payload for row in forecasts],
+        "inventory_projections": [row.payload for row in inventories],
+        "capacity_projections": [row.payload for row in capacities],
+        "risks": [row.payload for row in risks], "drivers": [row.payload for row in drivers],
+        "dossiers": [row.payload for row in dossiers],
+        "decisions": [{"decision": row.payload, "status": row.status,
+            "manager_decision": row.manager_decision} for row in decisions],
+        "outcomes": [row.payload for row in outcomes],
+        "synthetic": True}
+
+
+@router.get("/predictive/projections/inventory/{projection_id}")
+async def get_predictive_inventory_projection(projection_id: str,
+    db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(InventoryProjectionRecord, projection_id)
+    if row is None: raise HTTPException(status_code=404, detail="Inventory projection not found")
+    return row.payload
+
+
+@router.get("/predictive/projections/capacity/{projection_id}")
+async def get_predictive_capacity_projection(projection_id: str,
+    db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(CapacityProjectionRecord, projection_id)
+    if row is None: raise HTTPException(status_code=404, detail="Capacity projection not found")
+    return row.payload
+
+
+@router.get("/predictive/dossiers/{dossier_id}")
+async def get_predictive_dossier(dossier_id: str, db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(ForecastDossierRecord, dossier_id)
+    if row is None: raise HTTPException(status_code=404, detail="Forecast dossier not found")
+    return row.payload
+
+
+@router.get("/predictive/decisions/{decision_id}")
+async def get_predictive_decision(decision_id: str, db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(PredictiveDecisionRecord, decision_id)
+    if row is None: raise HTTPException(status_code=404, detail="Predictive decision not found")
+    return {"decision": row.payload, "status": row.status, "manager_decision": row.manager_decision,
+        "manager_id": row.manager_id, "manager_note": row.manager_note}
+
+
+@router.post("/predictive/decisions/{decision_id}/review")
+async def review_predictive_decision(decision_id: str, payload: PredictiveManagerReviewPayload,
+    db: AsyncSession = Depends(get_db_session)):
+    if not payload.manager_id.strip() or not payload.idempotency_key.strip():
+        raise HTTPException(status_code=422, detail="manager_id and idempotency_key must be non-empty")
+    replay = (await db.execute(select(PredictiveDecisionRecord).where(
+        PredictiveDecisionRecord.idempotency_key == payload.idempotency_key))).scalars().first()
+    if replay is not None:
+        if replay.decision_id != decision_id or replay.manager_decision != payload.decision:
+            raise HTTPException(status_code=409, detail="Idempotency key already used for a different review")
+        return {"decision_id": replay.decision_id, "status": replay.status, "duplicate": True}
+    row = await db.get(PredictiveDecisionRecord, decision_id)
+    if row is None: raise HTTPException(status_code=404, detail="Predictive decision not found")
+    if row.status != "AWAITING_MANAGER_REVIEW":
+        raise HTTPException(status_code=409, detail="Decision is not awaiting manager review")
+    trace = (await db.execute(select(DecisionTraceRecord).where(
+        DecisionTraceRecord.decision_id == decision_id))).scalars().first()
+    if trace is not None and trace.checkpoint_thread_id:
+        from pathlib import Path
+        import tempfile
+        from src.intelligence.predictive_workflow import (
+            SqliteReviewCheckpointStore, resume_manager_review,
+        )
+        try:
+            resume_manager_review(thread_id=trace.checkpoint_thread_id,
+                manager_decision=payload.decision,
+                checkpoint_store=SqliteReviewCheckpointStore(
+                    Path(tempfile.gettempdir()) / "lossline-predictive-checkpoints.sqlite"))
+        except (LookupError, ValueError) as exc:
+            raise HTTPException(status_code=409, detail=f"Predictive checkpoint conflict: {exc}")
+    row.manager_decision = payload.decision
+    row.manager_id = payload.manager_id.strip()
+    row.manager_note = payload.manager_note
+    row.idempotency_key = payload.idempotency_key.strip()
+    row.decided_at = datetime.datetime.now(datetime.timezone.utc)
+    row.status = "MANAGER_APPROVED" if payload.decision == "APPROVE" else "MANAGER_REJECTED"
+    await db.flush()
+    await manager.broadcast_transition({"message_id": f"msg_pred_{row.decision_id}",
+        "decision_id": row.decision_id, "dossier_id": row.dossier_id, "stage": row.status,
+        "status": "success", "occurred_at": row.decided_at.isoformat()})
+    return {"decision_id": row.decision_id, "status": row.status, "duplicate": False}
+
+
+@router.get("/predictive/model-strategy")
+async def predictive_model_strategy(db: AsyncSession = Depends(get_db_session)):
+    return await select_forecast_strategy(db)
+
+
+@router.get("/predictive/outcomes/{forecast_id}")
+async def get_predictive_outcome(forecast_id: str, db: AsyncSession = Depends(get_db_session)):
+    row = (await db.execute(select(ActualOutcomeRecord).where(
+        ActualOutcomeRecord.forecast_id == forecast_id))).scalars().first()
+    if row is None: raise HTTPException(status_code=404, detail="Matured outcome not found")
+    return row.payload
+
+
+@router.get("/predictive/evaluations/forecast/{forecast_id}")
+async def get_predictive_forecast_evaluations(forecast_id: str,
+    db: AsyncSession = Depends(get_db_session)):
+    rows = (await db.execute(select(PredictiveEvaluationRecord).where(
+        PredictiveEvaluationRecord.forecast_id == forecast_id).order_by(
+        PredictiveEvaluationRecord.created_at))).scalars().all()
+    return [{"evaluation_id": row.evaluation_id, "evaluation_type": row.evaluation_type,
+        "decision_id": row.decision_id, "evaluation": row.payload} for row in rows]
+
+
+@router.get("/predictive/analytics/summary")
+async def predictive_analytics_summary(db: AsyncSession = Depends(get_db_session)):
+    return {
+        "forecast_count": await db.scalar(select(func.count(ForecastRecord.forecast_id))) or 0,
+        "risk_count": await db.scalar(select(func.count(RiskCandidateRecord.risk_id))) or 0,
+        "pending_review_count": await db.scalar(select(func.count(PredictiveDecisionRecord.decision_id)).where(
+            PredictiveDecisionRecord.status == "AWAITING_MANAGER_REVIEW")) or 0,
+        "synthetic": True,
+    }
 
 
 @router.post("/demo/runs", status_code=201)
@@ -355,6 +546,19 @@ async def reset_demo(db: AsyncSession = Depends(get_db_session)):
     logger.info("Executing demo database reset.")
     try:
         # Delete dependencies first to respect FK constraints
+        await db.execute(delete(PredictiveEvaluationRecord))
+        await db.execute(delete(ActualOutcomeRecord))
+        await db.execute(delete(DecisionTraceRecord))
+        await db.execute(delete(GuardResultRecord))
+        await db.execute(delete(PredictiveDecisionRecord))
+        await db.execute(delete(ForecastDossierRecord))
+        await db.execute(delete(DriverEvidenceRecord))
+        await db.execute(delete(RiskCandidateRecord))
+        await db.execute(delete(CapacityProjectionRecord))
+        await db.execute(delete(InventoryProjectionRecord))
+        await db.execute(delete(ForecastRecord))
+        await db.execute(delete(PredictiveFeatureSnapshot))
+        await db.execute(delete(ForecastModelArtifactRecord))
         await db.execute(delete(Outcome))
         await db.execute(delete(Action))
         await db.execute(delete(Recommendation))

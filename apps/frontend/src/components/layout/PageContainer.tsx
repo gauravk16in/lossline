@@ -27,5 +27,3 @@ export const PageContainer: React.FC<PageContainerProps> = ({ children }) => (
     </Box>
   </Box>
 );
-
-export const SIDEBAR_WIDTH_PX = SIDEBAR_WIDTH;
