@@ -4,11 +4,11 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project Status
 
-LOSSLine is in active early implementation. `FINAL_IMPLEMENTATION_PLAN.md` is the implementation authority; `IMPLEMENTATION_PLAN.md` is superseded. `docs/architecture.md` is the architectural summary. The only implemented package is `packages/intelligence/` (198 tests, all passing).
+LOSSLine is in active implementation. `FINAL_IMPLEMENTATION_PLAN.md` is the implementation authority; `IMPLEMENTATION_PLAN.md` is superseded. `docs/architecture.md` is the architectural summary.
 
-Most directories (`apps/`, `services/`, `simulator/`, `scripts/`) contain only empty placeholder files. `docs/architecture.md` explicitly notes that `packages/intelligence/` and `services/intelligence/` must converge on one location before broader implementation — do not add intelligence code to `services/intelligence/` until that decision is made.
+The canonical application layout is `apps/backend/`, `apps/frontend/`, `packages/intelligence/`, and `simulator/`. Backend intelligence orchestration lives under `apps/backend/src/intelligence/`; deterministic domain logic lives only under `packages/intelligence/`.
 
-The `app/` directory (placeholder `x.txt`/`y.txt`) is distinct from `apps/` — both exist; only `apps/` is the intended target. Do not add code to `app/`.
+Do not recreate the obsolete singular `app/` tree or add a second intelligence implementation under `services/intelligence/`.
 
 ## Python Environment
 

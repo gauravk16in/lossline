@@ -53,7 +53,7 @@ The MVP remains a modular monolith:
 
 - `apps/backend/` contains FastAPI endpoints, persistence, the outbox publisher, stream consumers, REST state APIs, and WebSocket notifications.
 - `apps/frontend/` contains the operator dashboard, incident evidence, approval actions, and outcome views.
-- `packages/intelligence/` or `services/intelligence/` contains pure aggregation, baseline, detection, correlation, confidence, impact, recommendation, and workflow-domain logic. Repository packaging must converge on one location before broader implementation.
+- `packages/intelligence/` contains pure aggregation, baseline, detection, correlation, confidence, impact, recommendation, and workflow-domain logic. This is the canonical intelligence package; backend orchestration imports it rather than duplicating it under `services/`.
 - `simulator/` contains seeded baseline data and repeatable scenarios that submit canonical events to FastAPI.
 - `docs/` contains contracts, decisions, runbooks, and demo guidance.
 

@@ -1,28 +1,40 @@
-.PHONY: setup dev test lint db-migrate db-revision
+.PHONY: setup dev test test-intelligence test-backend test-simulator frontend-dev frontend-build db-migrate db-revision
 
-VENV = app/backend/.venv
-PYTHON = $(VENV)/Scripts/python
-PIP = $(VENV)/Scripts/pip
-ALEMBIC = $(VENV)/Scripts/alembic
+VENV := .venv
+PYTHON := $(VENV)/bin/python
+PIP := $(VENV)/bin/pip
+PYTEST := $(VENV)/bin/pytest
+ALEMBIC := $(VENV)/bin/alembic
+PYTHONPATH := apps/backend:packages/intelligence/src
 
 setup:
-	python -m venv $(VENV)
-	$(PIP) install -r app/backend/requirements.txt
+	python3.12 -m venv $(VENV)
+	$(PIP) install -e "packages/intelligence[dev]"
+	$(PIP) install -r apps/backend/requirements.txt
+	cd apps/frontend && npm ci
 
 dev:
-	cd app/backend && ../../$(PYTHON) -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+	PYTHONPATH=$(PYTHONPATH) $(PYTHON) -m uvicorn src.main:app --app-dir apps/backend --reload --host 0.0.0.0 --port 8000
 
-test:
-	cd app/backend && ../../$(PYTHON) -m pytest
+test: test-intelligence test-backend test-simulator
 
-lint:
-	$(VENV)/Scripts/black --check app/backend/app
-	$(VENV)/Scripts/flake8 app/backend/app
-	$(VENV)/Scripts/mypy app/backend/app
+test-intelligence:
+	$(PYTEST) packages/intelligence/tests/
+
+test-backend:
+	INLINE_PROCESSING=false PYTHONPATH=$(PYTHONPATH) $(PYTEST) apps/backend/tests/
+
+test-simulator:
+	INLINE_PROCESSING=false PYTHONPATH=$(PYTHONPATH):simulator $(PYTEST) simulator/tests/
+
+frontend-dev:
+	cd apps/frontend && npm run dev
+
+frontend-build:
+	cd apps/frontend && npm run build
 
 db-migrate:
-	cd app/backend && ../../$(ALEMBIC) upgrade head
+	cd apps/backend && ../../$(ALEMBIC) upgrade head
 
-# Allow passing arguments to db-revision like: make db-revision init_schema
 db-revision:
-	cd app/backend && ../../$(ALEMBIC) revision --autogenerate -m "schema update"
+	cd apps/backend && ../../$(ALEMBIC) revision --autogenerate -m "$(MESSAGE)"
