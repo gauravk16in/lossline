@@ -137,6 +137,9 @@ def test_promotion_targets_sku_and_limited_inventory_stockouts() -> None:
     mutton = _sku(window, "MUTTON_BIRYANI")
 
     assert window.context.promoted_sku_id == chicken.sku_id
+    assert window.context.weekday == 5
+    assert window.context.weather is WeatherState.RAIN
+    assert window.context.rainfall_mm == Decimal("18")
     assert chicken.demand_multiplier > mutton.demand_multiplier
     assert chicken.stockout is True
 

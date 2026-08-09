@@ -1,7 +1,8 @@
 import asyncio
 import logging
 from typing import cast, Any
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import or_
 from sqlalchemy import select
 from src.db.session import SessionLocal
 from src.db.models import Event
@@ -18,16 +19,25 @@ async def process_outbox(redis_publisher: RedisPublisher):
     """
     async with SessionLocal() as session:
         # Fetch a batch of unpublished events ordered by insertion
+        stale_before = datetime.now(timezone.utc) - timedelta(minutes=5)
         result = await session.execute(
             select(Event)
             .filter(Event.published_to_stream == False)
+            .filter(or_(Event.outbox_claimed_at.is_(None), Event.outbox_claimed_at < stale_before))
             .order_by(Event.id.asc())
             .limit(100)
+            .with_for_update(skip_locked=True)
         )
         events = result.scalars().all()
 
         if not events:
             return
+
+        claimed_at = datetime.now(timezone.utc)
+        for event in events:
+            event.outbox_claimed_at = claimed_at
+            event.outbox_attempt_count = int(event.outbox_attempt_count or 0) + 1
+        await session.commit()
 
         published_ids = []
         for ev in events:
@@ -48,8 +58,13 @@ async def process_outbox(redis_publisher: RedisPublisher):
                 # Publish to Redis Stream
                 await redis_publisher.publish_event(envelope)
                 ev.published_to_stream = True  # type: ignore[assignment]
+                ev.outbox_published_at = datetime.now(timezone.utc)
+                ev.outbox_claimed_at = None
+                ev.outbox_last_error = None
                 published_ids.append(ev.id)
             except Exception as e:
+                ev.outbox_last_error = str(e)[:1000]
+                ev.outbox_claimed_at = None
                 logger.error(
                     f"Outbox worker failed to publish event {ev.event_id} to Redis: {e}"
                 )

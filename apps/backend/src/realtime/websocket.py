@@ -8,11 +8,11 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, subprotocol: str | None = None):
         """
         Accepts and registers a new WebSocket connection.
         """
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         self.active_connections.append(websocket)
         logger.info(
             f"New WebSocket client connected. Active connections: {len(self.active_connections)}"

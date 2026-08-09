@@ -33,10 +33,18 @@ class Settings(BaseSettings):
     M0_FIXTURE_ORDER_COUNT: float = Field(default=18.0)
     M0_FIXTURE_AVG_PREP_MINUTES: float = Field(default=12.0)
     M0_FIXTURE_AVG_HANDOFF_MINUTES: float = Field(default=3.0)
+    ENABLE_SYNTHETIC_FIXTURE_BASELINES: bool = Field(default=False)
     CONFIG_VERSION: str = Field(default="config.v1")
     RECOMMENDATION_EXPIRY_MINUTES: int = Field(default=15)
     OUTCOME_MIN_EVENTS: int = Field(default=3)
     STREAM_MAX_RETRIES: int = Field(default=3)
+    MAX_REQUEST_BYTES: int = Field(default=256 * 1024, gt=0)
+    CORS_ORIGINS: str = Field(default="http://localhost:3000")
+    INGEST_API_KEY: str | None = Field(default=None)
+    MANAGER_API_KEY: str | None = Field(default=None)
+    ADMIN_API_KEY: str | None = Field(default=None)
+    ALLOW_GLOBAL_DEMO_RESET: bool = Field(default=False)
+    WS_ALLOWED_ORIGINS: str = Field(default="http://localhost:3000")
 
     # (Optional) LLM & Tracing configurations — LangGraph deferred until
     # deterministic detection → correlate → recommend path is proven.

@@ -52,7 +52,6 @@ from src.intelligence.event_loader import load_events_spanning, load_normalized_
 from src.intelligence.persistence import (
     broadcast_incident_transition,
     persist_incident_from_candidate,
-    persist_m0_cancellation_incident,
     upsert_signal,
 )
 from src.intelligence.windows import analysis_window, prior_windows
@@ -239,7 +238,14 @@ async def run_detection_pipeline(envelope: EventEnvelope, *, db_session=None) ->
             outlet_id=outlet_id,
             min_history_windows=settings.BASELINE_HISTORY_WINDOWS,
         )
-        baseline = merge_baseline_with_fixture(computed, fixture_baseline(outlet_id))
+        # Production semantics: insufficient observed history remains
+        # insufficient. Synthetic fixture baselines are never injected
+        # implicitly into operational decisions.
+        baseline = (
+            merge_baseline_with_fixture(computed, fixture_baseline(outlet_id))
+            if settings.ENABLE_SYNTHETIC_FIXTURE_BASELINES
+            else computed
+        )
 
         domain_signals = run_detectors(snapshot, baseline)
         if not domain_signals:
@@ -253,12 +259,9 @@ async def run_detection_pipeline(envelope: EventEnvelope, *, db_session=None) ->
             return
 
         signal_rows = []
-        cancel_domain: DomainSignal | None = None
         for sig in domain_signals:
             row = await upsert_signal(db, sig)
             signal_rows.append(row)
-            if sig.signal_type.value == "CANCELLATION_SPIKE":
-                cancel_domain = sig
 
         # Full M1 correlation path
         # Load recent persisted domain-compatible signals from this window set:
@@ -371,26 +374,6 @@ async def run_detection_pipeline(envelope: EventEnvelope, *, db_session=None) ->
                 "[Detection Pipeline] Persisted overload incident %s status=%s",
                 incident.id,
                 status,
-            )
-            return
-
-        # M0 path: cancellation signal alone still surfaces an incident
-        if cancel_domain is not None:
-            cancel_row = next(
-                row
-                for row, domain in zip(signal_rows, domain_signals)
-                if domain.signal_id == cancel_domain.signal_id
-            )
-            incident = await persist_m0_cancellation_incident(
-                db,
-                domain_signal=cancel_domain,
-                signal_row=cancel_row,
-            )
-            await db.commit()
-            await broadcast_incident_transition(incident, incident.status)
-            logger.info(
-                "[Detection Pipeline] Persisted M0 cancellation incident %s",
-                incident.id,
             )
             return
 

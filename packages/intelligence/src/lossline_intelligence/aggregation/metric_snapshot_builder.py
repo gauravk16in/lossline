@@ -94,6 +94,7 @@ class NormalizedEvent:
     channel: str | None = None
     amount: Decimal | None = None
     order_id: str | None = None
+    entity_id: str | None = None
     duration_seconds: float | None = None
     wait_seconds: float | None = None
     rating: int | None = None
@@ -210,6 +211,12 @@ def build_metric_snapshot(
     delay_review_ids: list[str] = []
     source_ids: list[str] = []
 
+    cohort_order_ids = {
+        (evt.entity_id or evt.order_id)
+        for evt in in_window
+        if evt.event_type == "order.created" and (evt.entity_id or evt.order_id)
+    }
+
     for evt in in_window:
         source_ids.append(evt.event_id)
         et = evt.event_type
@@ -220,7 +227,11 @@ def build_metric_snapshot(
                 delivery_order_count += 1
 
         elif et == "order.cancelled":
-            cancelled_order_count += 1
+            # Same-window cohort semantics: a cancellation is attributed only
+            # when its order was created in this analysis window.
+            cancelled_id = evt.entity_id or evt.order_id
+            if cancelled_id in cohort_order_ids:
+                cancelled_order_count += 1
 
         elif et == "preparation.completed":
             if evt.duration_seconds is not None:
@@ -239,14 +250,8 @@ def build_metric_snapshot(
                     delay_review_ids.append(evt.event_id)
 
     # --- Derived metrics ------------------------------------------------------
-    # Clamp: MetricSnapshot enforces cancelled_order_count <= order_count.
-    # Cancellations in the window may exceed created-in-window orders when
-    # pre-window orders are cancelled during this window; we floor at zero and
-    # cap at order_count so the snapshot model invariant is always satisfied.
-    clamped_cancelled = min(cancelled_order_count, order_count)
-
     if order_count > 0:
-        cancellation_rate = Decimal(str(clamped_cancelled / order_count)).quantize(
+        cancellation_rate = Decimal(str(cancelled_order_count / order_count)).quantize(
             _DECIMAL_PLACES, rounding=ROUND_HALF_UP
         )
     else:
@@ -270,7 +275,7 @@ def build_metric_snapshot(
             "window_end": window_end,
             "order_count": order_count,
             "delivery_order_count": delivery_order_count,
-            "cancelled_order_count": clamped_cancelled,
+            "cancelled_order_count": cancelled_order_count,
             "cancellation_rate": cancellation_rate,
             "avg_prep_minutes": avg_prep_minutes,
             "p90_prep_minutes": p90_prep_minutes,

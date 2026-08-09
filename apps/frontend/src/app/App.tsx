@@ -3,7 +3,6 @@ import { ThemeProvider, CssBaseline, Box } from '@mui/material';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import theme from './theme';
 import { Sidebar } from '../components/layout/Sidebar';
-import { OverviewPage } from '../pages/OverviewPage';
 import { IncidentsPage } from '../pages/IncidentsPage';
 import { IncidentDetailPage } from '../pages/IncidentDetailPage';
 import { OutletsPage } from '../pages/OutletsPage';
@@ -50,16 +49,7 @@ function AppShell() {
         <Routes>
           <Route
             path="/"
-            element={
-              <OverviewPage
-                incidents={incidents}
-                summary={summary}
-                restaurants={restaurants}
-                loading={loading || restaurantsLoading}
-                error={error}
-                connectionStatus={connectionStatus}
-              />
-            }
+            element={<PredictiveTodayPage restaurants={restaurants} restaurantsLoading={restaurantsLoading} />}
           />
           <Route path="/predictive" element={<PredictiveTodayPage restaurants={restaurants} restaurantsLoading={restaurantsLoading} />} />
           <Route

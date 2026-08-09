@@ -9,6 +9,8 @@ sys.path.insert(0, os.path.join(ROOT, "simulator"))
 import pytest
 from datetime import datetime, timezone
 from src.ingestion.schemas import EventEnvelope
+from src.intelligence.mapper import envelope_to_normalized
+from lossline_intelligence.aggregation import build_metric_snapshot
 from lossline_simulator.scenarios.lunch_rush import generate_scenario_events
 
 
@@ -48,3 +50,19 @@ def test_simulator_events_generation_and_validation():
         pre_approval,
         post_approval,
     )
+
+
+def test_actual_lunch_rush_has_all_required_evidence_in_one_window():
+    start = datetime(2026, 8, 10, 1, 0, tzinfo=timezone.utc)
+    _, live, _ = generate_scenario_events(start_time=start, seed=42, scenario_run_id="run-42")
+    window_start = start.replace(hour=12, minute=30, second=0, microsecond=0)
+    snapshot = build_metric_snapshot(
+        [envelope_to_normalized(EventEnvelope(**event)) for event in live],
+        outlet_id="meghana_indiranagar",
+        window_start=window_start,
+        window_end=window_start.replace(hour=13, minute=0),
+    )
+    assert snapshot.order_count >= 24
+    assert snapshot.prep_completed_count >= 8
+    assert snapshot.cancelled_order_count >= 5
+    assert all(event["metadata"]["scenario_run_id"] == "run-42" for event in live)

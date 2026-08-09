@@ -171,10 +171,8 @@ async def test_pipeline_persists_cancellation_signal_and_incident(
     assert signals[0].baseline_value == Decimal("0.0700")
 
     incidents = (await db_session.execute(select(Incident))).scalars().all()
-    assert len(incidents) == 1
-    assert incidents[0].incident_type == "CANCELLATION_SPIKE"
-    assert incidents[0].status == "AWAITING_APPROVAL"
-    broadcast.assert_awaited()
+    assert incidents == []
+    broadcast.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -211,7 +209,7 @@ async def test_pipeline_idempotent_signal_upsert(db_session: AsyncSession) -> No
     assert len(signals) == 1
 
     incidents = (await db_session.execute(select(Incident))).scalars().all()
-    assert len(incidents) == 1
+    assert incidents == []
 
 
 @pytest.mark.asyncio

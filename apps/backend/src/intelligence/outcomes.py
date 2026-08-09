@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +25,14 @@ async def verify_incident_outcome(db: AsyncSession, incident: Incident) -> Outco
     if existing is not None and existing.status != "INSUFFICIENT_DATA":
         return existing
 
+    pre_result = await db.execute(
+        select(Event).where(
+            Event.restaurant_id == incident.restaurant_id,
+            Event.occurred_at >= incident.window_start,
+            Event.occurred_at < incident.window_end,
+        )
+    )
+    pre_events = pre_result.scalars().all()
     result = await db.execute(
         select(Event).where(
             Event.restaurant_id == incident.restaurant_id,
@@ -31,40 +40,55 @@ async def verify_incident_outcome(db: AsyncSession, incident: Incident) -> Outco
         )
     )
     events = result.scalars().all()
-    created = sum(event.event_type == "order.created" for event in events)
-    cancelled = sum(event.event_type == "order.cancelled" for event in events)
-    cancellation_rate = cancelled / created if created else None
-    handoffs = [
-        float(event.data["wait_seconds"]) / 60
-        for event in events
-        if event.event_type == "delivery.handoff_completed"
-    ]
-    prep = [
-        float(event.data["duration_seconds"]) / 60
-        for event in events
-        if event.event_type == "preparation.completed"
-    ]
+    def metrics(rows: list[Event]) -> dict[str, Any]:
+        created_ids = {row.entity.get("id") for row in rows if row.event_type == "order.created"}
+        cancelled = sum(
+            row.event_type == "order.cancelled" and row.entity.get("id") in created_ids
+            for row in rows
+        )
+        handoffs = [float(row.data["wait_seconds"]) / 60 for row in rows
+                    if row.event_type == "delivery.handoff_completed"]
+        prep = [float(row.data["duration_seconds"]) / 60 for row in rows
+                if row.event_type == "preparation.completed"]
+        count = len(created_ids)
+        return {"order_count": count, "cancelled_order_count": cancelled,
+            "cancellation_rate": cancelled / count if count else None,
+            "avg_handoff_wait_minutes": sum(handoffs) / len(handoffs) if handoffs else None,
+            "handoff_sample_count": len(handoffs),
+            "avg_prep_minutes": sum(prep) / len(prep) if prep else None,
+            "prep_sample_count": len(prep), "source_event_count": len(rows)}
 
-    post_metrics = {
-        "order_count": created,
-        "cancelled_order_count": cancelled,
-        "cancellation_rate": cancellation_rate,
-        "avg_handoff_wait_minutes": sum(handoffs) / len(handoffs) if handoffs else None,
-        "avg_prep_minutes": sum(prep) / len(prep) if prep else None,
-        "source_event_count": len(events),
-    }
-    baseline_metrics = {
-        "incident_confidence": incident.confidence,
-        "incident_severity": incident.severity,
-        "window_start": incident.window_start.isoformat(),
-        "window_end": incident.window_end.isoformat(),
-    }
-    sufficient = len(events) >= settings.OUTCOME_MIN_EVENTS and created > 0
-    improved = sufficient and cancelled == 0
-    status = (
-        "IMPROVED"
-        if improved
-        else ("NOT_IMPROVED" if sufficient else "INSUFFICIENT_DATA")
+    baseline_metrics = metrics(pre_events)
+    post_metrics = metrics(events)
+    sufficient = (
+        baseline_metrics["order_count"] >= settings.OUTCOME_MIN_EVENTS
+        and post_metrics["order_count"] >= settings.OUTCOME_MIN_EVENTS
+    )
+    improvements: list[bool] = []
+    regressions: list[bool] = []
+    for name, absolute_delta in (("cancellation_rate", 0.02),
+                                 ("avg_prep_minutes", None),
+                                 ("avg_handoff_wait_minutes", None)):
+        before, after = baseline_metrics[name], post_metrics[name]
+        if before is None or after is None:
+            continue
+        if absolute_delta is not None:
+            improvements.append(before - after >= absolute_delta)
+            regressions.append(after - before >= absolute_delta)
+        elif before > 0:
+            improvements.append((before - after) / before >= 0.10)
+            regressions.append((after - before) / before >= 0.10)
+    if not sufficient or not improvements:
+        status = "INSUFFICIENT_DATA"
+    elif any(regressions):
+        status = "WORSENED"
+    elif any(improvements):
+        status = "IMPROVED"
+    else:
+        status = "NO_CHANGE"
+    post_metrics["sufficient"] = sufficient
+    post_metrics["non_causality_note"] = (
+        "Observed pre/post association only; this evaluation does not establish causation."
     )
     now = datetime.now(timezone.utc)
     if existing is None:
@@ -77,10 +101,10 @@ async def verify_incident_outcome(db: AsyncSession, incident: Incident) -> Outco
     outcome.post_metrics = post_metrics
     outcome.check_after = now
     outcome.evaluated_at = now if sufficient else None
-    outcome.rule_version = "outcome.v1"
+    outcome.rule_version = "reactive_outcome.v2"
     if status == "IMPROVED":
         incident.status = "RESOLVED"
-    elif status == "NOT_IMPROVED":
+    elif status in {"NO_CHANGE", "WORSENED"}:
         incident.status = "NOT_IMPROVED"
     else:
         incident.status = "VERIFYING"

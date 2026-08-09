@@ -47,6 +47,7 @@ def envelope_to_normalized(envelope: EventEnvelope) -> NormalizedEvent:
         event_type=envelope.event_type.value,
         occurred_at=envelope.occurred_at,
         data=envelope.data,
+        entity_id=envelope.entity.id,
     )
 
 
@@ -59,6 +60,7 @@ def orm_event_to_normalized(event: Event) -> NormalizedEvent:
         event_type=event.event_type,
         occurred_at=event.occurred_at,
         data=data,
+        entity_id=(event.entity or {}).get("id"),
     )
 
 
@@ -69,6 +71,7 @@ def _build_normalized(
     event_type: str,
     occurred_at: datetime,
     data: Mapping[str, Any],
+    entity_id: str | None,
 ) -> NormalizedEvent:
     channel = data.get("channel")
     amount = _decimal_or_none(data.get("amount"))
@@ -129,6 +132,7 @@ def _build_normalized(
         outlet_id=outlet_id,
         event_type=event_type,
         occurred_at=_as_utc(occurred_at),
+        entity_id=entity_id,
         channel=str(channel) if channel is not None else None,
         amount=amount,
         order_id=str(order_id) if order_id is not None else None,

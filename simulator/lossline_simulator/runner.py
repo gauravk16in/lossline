@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timezone
 import httpx
@@ -14,6 +15,15 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("simulator")
+INGEST_KEY = os.getenv("LOSSLINE_INGEST_KEY", "")
+MANAGER_KEY = os.getenv("LOSSLINE_MANAGER_KEY", "")
+ADMIN_KEY = os.getenv("LOSSLINE_ADMIN_KEY", "")
+
+
+def role_headers(key: str) -> dict[str, str]:
+    if not key:
+        raise RuntimeError("Required LOSSLine role key is missing from simulator environment")
+    return {"X-LOSSLine-Key": key}
 
 
 async def post_event(client: httpx.AsyncClient, api_url: str, event: dict) -> bool:
@@ -22,7 +32,7 @@ async def post_event(client: httpx.AsyncClient, api_url: str, event: dict) -> bo
     """
     url = f"{api_url}/api/v1/events"
     try:
-        response = await client.post(url, json=event, timeout=30.0)
+        response = await client.post(url, json=event, headers=role_headers(INGEST_KEY), timeout=30.0)
         if response.status_code in [200, 202]:
             data = response.json()
             logger.debug(
@@ -39,7 +49,7 @@ async def post_event(client: httpx.AsyncClient, api_url: str, event: dict) -> bo
         return False
 
 
-async def wait_for_manager_approval(api_url: str) -> None:
+async def wait_for_manager_approval(api_url: str, timeout_seconds: float = 60.0) -> None:
     """
     Blocks until the manager approves the recommended action.
     Listens to WebSockets for status change notifications, falling back to polling.
@@ -56,14 +66,15 @@ async def wait_for_manager_approval(api_url: str) -> None:
     # Task to listen on Websocket
     async def listen_ws():
         try:
-            async with websockets.connect(ws_url) as ws:
+            async with websockets.connect(ws_url, origin="http://localhost:3000",
+                subprotocols=[MANAGER_KEY]) as ws:
                 logger.info("Connected to WebSocket transition feed.")
                 while True:
                     msg_str = await ws.recv()
                     msg = json.loads(msg_str)
                     logger.info(f"WebSocket notification: {msg}")
                     # In endpoints.py: stage is set to incident.status which transitions to ACTION_APPROVED
-                    if msg.get("stage") == "ACTION_APPROVED":
+                    if msg.get("stage") in {"APPROVED_PENDING_EXECUTION", "ACTION_EXECUTED"}:
                         logger.info("Manager approval detected via WebSocket!")
                         approval_event.set()
                         return
@@ -84,7 +95,7 @@ async def wait_for_manager_approval(api_url: str) -> None:
                         incidents = response.json()
                         for inc in incidents:
                             # If any incident has moved to ACTION_APPROVED
-                            if inc.get("status") == "ACTION_APPROVED":
+                            if inc.get("status") in {"APPROVED_PENDING_EXECUTION", "ACTION_EXECUTED"}:
                                 logger.info(
                                     "Manager approval detected via REST polling!"
                                 )
@@ -98,7 +109,13 @@ async def wait_for_manager_approval(api_url: str) -> None:
     poll_task = asyncio.create_task(poll_rest())
 
     # Wait until the approval event is set
-    await approval_event.wait()
+    try:
+        await asyncio.wait_for(approval_event.wait(), timeout=timeout_seconds)
+    except TimeoutError as exc:
+        raise RuntimeError(
+            "Timed out waiting for approval: no incident reached APPROVED_PENDING_EXECUTION; "
+            "inspect /api/v1/incidents for missing correlated evidence or recommendation"
+        ) from exc
 
     # Cancel pending tasks
     ws_task.cancel()
@@ -113,33 +130,18 @@ async def run_simulation(api_url: str, speed: float, seed: int):
     """
     start_time = datetime.now(timezone.utc)
 
-    # 1. Generate events
-    logger.info("Generating scenario events...")
-    baseline_events, pre_approval_events, post_approval_events = (
-        generate_scenario_events(start_time=start_time, seed=seed)
-    )
-
     async with httpx.AsyncClient() as client:
-        # 2. Reset database for clean run
-        logger.info("Resetting demo database...")
-        try:
-            reset_resp = await client.post(f"{api_url}/api/v1/demo/reset", timeout=15.0)
-            if reset_resp.status_code != 200:
-                logger.error(
-                    f"Reset database failed: Code {reset_resp.status_code} - {reset_resp.text}"
-                )
-                sys.exit(1)
-            logger.info("Database reset completed successfully.")
-        except Exception as e:
-            logger.critical(f"Failed to contact reset database endpoint: {e}")
-            sys.exit(1)
-
         run_response = await client.post(
             f"{api_url}/api/v1/demo/runs",
             json={"scenario_id": "meghana_lunch_rush_v1", "seed": seed, "speed": speed},
+            headers=role_headers(ADMIN_KEY),
         )
         run_response.raise_for_status()
         run_id = run_response.json()["id"]
+        logger.info("Generating scenario events for run %s...", run_id)
+        baseline_events, pre_approval_events, post_approval_events = generate_scenario_events(
+            start_time=start_time, seed=seed, scenario_run_id=str(run_id)
+        )
 
         # 3. Bulk load baseline history
         logger.info(
@@ -187,8 +189,25 @@ async def run_simulation(api_url: str, speed: float, seed: int):
         await asyncio.gather(*tasks)
         logger.info("Live pre-approval events stream completed.")
 
-        # 5. Pause and wait for manager approval
-        await wait_for_manager_approval(api_url)
+        # 5. Protected demo manager approval, followed by explicit execution ack.
+        deadline = asyncio.get_running_loop().time() + 60
+        incident = None
+        while asyncio.get_running_loop().time() < deadline:
+            rows = (await client.get(f"{api_url}/api/v1/incidents")).json()
+            candidates = [row for row in rows if row.get("incident_type") == "OPERATIONAL_OVERLOAD"]
+            if len(candidates) == 1 and candidates[0].get("recommendations"):
+                incident = candidates[0]
+                break
+            await asyncio.sleep(1)
+        if incident is None:
+            raise RuntimeError("No unique OPERATIONAL_OVERLOAD with recommendation appeared within 60s")
+        decision = await client.post(f"{api_url}/api/v1/incidents/{incident['id']}/decision",
+            json={"decision": "APPROVE", "idempotency_key": f"run-{run_id}-approval"},
+            headers=role_headers(MANAGER_KEY))
+        decision.raise_for_status()
+        execution = await client.post(f"{api_url}/api/v1/actions/{decision.json()['action_id']}/execution",
+            headers=role_headers(MANAGER_KEY))
+        execution.raise_for_status()
 
         # 6. Stream post-approval recovery events
         logger.info(f"Streaming {len(post_approval_events)} recovery events...")
@@ -207,17 +226,18 @@ async def run_simulation(api_url: str, speed: float, seed: int):
         approved = [
             incident
             for incident in incidents_response.json()
-            if incident.get("status") == "ACTION_APPROVED"
+            if incident.get("status") == "ACTION_EXECUTED"
         ]
         if not approved:
             raise RuntimeError("Approved incident disappeared before verification")
         verify_response = await client.post(
-            f"{api_url}/api/v1/incidents/{approved[0]['id']}/verify"
+            f"{api_url}/api/v1/incidents/{approved[0]['id']}/verify",
+            headers=role_headers(MANAGER_KEY),
         )
         verify_response.raise_for_status()
         logger.info("Outcome verification: %s", verify_response.json().get("status"))
         complete_response = await client.post(
-            f"{api_url}/api/v1/demo/runs/{run_id}/complete"
+            f"{api_url}/api/v1/demo/runs/{run_id}/complete", headers=role_headers(ADMIN_KEY)
         )
         complete_response.raise_for_status()
         logger.info("Simulation run completed successfully!")
@@ -229,8 +249,8 @@ def main():
     )
     parser.add_argument(
         "--api-url",
-        default="http://localhost:8000",
-        help="Backend FastAPI base URL (default: http://localhost:8000)",
+        default=os.getenv("LOSSLINE_API_URL", "http://localhost:8000"),
+        help="Backend FastAPI base URL (default: LOSSLINE_API_URL or localhost)",
     )
     parser.add_argument(
         "--speed",

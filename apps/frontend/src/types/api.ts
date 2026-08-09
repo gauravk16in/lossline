@@ -4,7 +4,8 @@ export type IncidentStatus =
   | 'DETECTED'
   | 'INVESTIGATING'
   | 'AWAITING_APPROVAL'
-  | 'ACTION_APPROVED'
+  | 'APPROVED_PENDING_EXECUTION'
+  | 'ACTION_EXECUTED'
   | 'ACTION_REJECTED'
   | 'VERIFYING'
   | 'RESOLVED'
@@ -127,16 +128,53 @@ export interface PredictiveForecast {
   data_sufficient: boolean;
 }
 
+export type PredictiveFeatureValue = string | number | boolean | null;
+
+export interface PredictiveFeatureSnapshot {
+  snapshot_id: string;
+  pipeline_version: string;
+  prediction_as_of: string;
+  outlet_id: string;
+  sku_id: string;
+  service_window: string;
+  window_start: string;
+  window_end: string;
+  registry_version: string;
+  registry_fingerprint: string;
+  feature_values: Record<string, PredictiveFeatureValue>;
+  source_signal_ids: string[];
+  missing_features: string[];
+  imputed_features: string[];
+  quality: {
+    completeness: string;
+    data_sufficiency: boolean;
+    stale_feature_ids: string[];
+    censored_target: boolean;
+    data_quality_score: string;
+  };
+  fingerprint: string;
+  created_at: string;
+}
+
 export interface PredictiveInventoryProjection {
   projection_id: string;
   forecast_id: string;
   sku_id: string;
+  opening_inventory: number;
+  replenishment_quantity: number;
+  safety_buffer: number;
+  available_for_demand: number;
   ending_inventory_point: number;
   shortage_point: number;
   surplus_point: number;
   stockout_risk: boolean;
   shortage_severity: string;
   stockout_window_fraction: string | null;
+  usable_supply?: number;
+  shortage_upper?: number;
+  surplus_risk?: boolean;
+  unit?: string;
+  rule_version?: string;
 }
 
 export interface PredictiveCapacityProjection {
@@ -148,6 +186,12 @@ export interface PredictiveCapacityProjection {
   risk_tier: string;
   overloaded: boolean;
   mean_preparation_minutes: string;
+  demand_workload_point?: string;
+  demand_workload_lower?: string;
+  demand_workload_upper?: string;
+  available_capacity_minutes?: string;
+  effective_capacity_minutes?: string;
+  rule_version?: string;
 }
 
 export interface PredictiveDriver {
@@ -166,9 +210,19 @@ export interface PredictiveDecisionView {
   decision: {
     decision_id: string;
     action: string;
+    risk_type: string;
+    sku_id: string | null;
+    reason_code: string;
+    evidence_ids: string[];
+    urgency: string;
+    action_risk: string;
     quantity: string | null;
     unit: string | null;
     approval_required: boolean;
+    execute_by?: string;
+    constraints_considered?: string[];
+    dossier_id?: string;
+    forecast_id?: string;
   };
   status: string;
   manager_decision: string | null;
@@ -182,12 +236,16 @@ export interface PredictiveActualOutcome {
   unfulfilled_quantity: string | null;
   status: 'AVAILABLE' | 'CENSORED' | 'MISSING';
   matured_at: string;
+  ending_inventory?: string | null;
+  capacity_utilization?: string | null;
+  sku_id?: string;
 }
 
 export interface PredictiveToday {
   outlet_id: string;
   service_window: string;
   forecasts: PredictiveForecast[];
+  feature_snapshots: PredictiveFeatureSnapshot[];
   inventory_projections: PredictiveInventoryProjection[];
   capacity_projections: PredictiveCapacityProjection[];
   risks: Array<Record<string, unknown>>;
@@ -195,6 +253,13 @@ export interface PredictiveToday {
   dossiers: Array<Record<string, unknown>>;
   decisions: PredictiveDecisionView[];
   outcomes: PredictiveActualOutcome[];
+  evaluations: Array<{
+    evaluation_id: string;
+    evaluation_type: 'FORECAST' | 'RISK' | 'DECISION';
+    forecast_id: string;
+    decision_id: string | null;
+    evaluation: Record<string, string | number | boolean | null>;
+  }>;
   synthetic: boolean;
 }
 

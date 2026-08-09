@@ -2,11 +2,11 @@ services:
   postgres:
     image: postgres:17.6-alpine
     environment:
-      POSTGRES_DB: lossline
-      POSTGRES_USER: lossline
-      POSTGRES_PASSWORD: lossline_demo
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lossline -d lossline"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -27,9 +27,12 @@ services:
       context: .
       dockerfile: apps/backend/Dockerfile
     environment:
-      DATABASE_URL: postgresql+asyncpg://lossline:lossline_demo@postgres:5432/lossline
-      DIRECT_DATABASE_URL: postgresql://lossline:lossline_demo@postgres:5432/lossline
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+      DIRECT_DATABASE_URL: ${DIRECT_DATABASE_URL:?set DIRECT_DATABASE_URL in .env}
       REDIS_URL: redis://redis:6379/0
+      INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
+      MANAGER_API_KEY: ${MANAGER_API_KEY:?set MANAGER_API_KEY in .env}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
       DEMO_MODE: "true"
       DEBUG: "false"
     depends_on:
@@ -55,6 +58,11 @@ services:
       context: .
       dockerfile: simulator/Dockerfile
     profiles: ["demo"]
+    environment:
+      LOSSLINE_API_URL: http://backend:8000
+      LOSSLINE_INGEST_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
+      LOSSLINE_MANAGER_KEY: ${MANAGER_API_KEY:?set MANAGER_API_KEY in .env}
+      LOSSLINE_ADMIN_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
     depends_on:
       backend: { condition: service_healthy }
 

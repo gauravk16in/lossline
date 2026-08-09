@@ -35,6 +35,7 @@ class EntitySchema(ContractModel):
 class MetadataSchema(ContractModel):
     synthetic: bool = True
     scenario_id: str | None = None
+    scenario_run_id: str | None = Field(default=None, min_length=1, max_length=128)
     sequence: int | None = None
     schema_version: str = "1.0"
 
@@ -90,13 +91,25 @@ class PredictiveSkuPlanData(ContractModel):
     workload_minutes: float = Field(..., gt=0)
 
 
+class PredictiveContext(ContractModel):
+    weekday: int = Field(default=0, ge=0, le=6)
+    day_of_week: str | None = Field(default=None, max_length=16)
+    weather_state: str = Field(default="MISSING", min_length=1, max_length=32)
+    rainfall_mm: float | None = Field(default=None, ge=0)
+    holiday: bool = False
+    local_event: bool = False
+    promoted_sku_id: str | None = Field(default=None, max_length=128)
+    promotion_discount: float | None = Field(default=None, ge=0, le=1)
+    delivery_share: float = Field(default=0, ge=0, le=1)
+
+
 class PredictiveWindowScheduledData(ContractModel):
     service_window: str = Field(..., min_length=1)
     window_start: datetime
     window_end: datetime
     available_capacity_minutes: float = Field(..., gt=0)
     data_quality: float = Field(..., ge=0, le=1)
-    context: Dict[str, Any]
+    context: PredictiveContext
     skus: tuple[PredictiveSkuPlanData, ...] = Field(..., min_length=1)
 
     @model_validator(mode="after")
@@ -134,7 +147,7 @@ class DemandWindowObservedData(ContractModel):
     capacity_utilization: float = Field(..., ge=0)
     available_capacity_minutes: float = Field(..., gt=0)
     data_quality: float = Field(..., ge=0, le=1)
-    context: Dict[str, Any]
+    context: PredictiveContext
     skus: tuple[ObservedSkuData, ...] = Field(..., min_length=1)
 
     @model_validator(mode="after")
@@ -150,13 +163,25 @@ class DemandWindowObservedData(ContractModel):
 class EventEnvelope(ContractModel):
     schema_version: str = Field(default="1.0")
     event_id: str = Field(..., min_length=1)
-    restaurant_id: str = Field(..., min_length=1)
+    restaurant_id: str | None = Field(default=None, min_length=1)
+    outlet_id: str | None = Field(default=None, min_length=1)
     source: EventSource
     event_type: EventType
     occurred_at: datetime
     entity: EntitySchema
     data: Dict[str, Any]
     metadata: MetadataSchema
+
+    @model_validator(mode="after")
+    def resolve_outlet_identity(self) -> "EventEnvelope":
+        if self.outlet_id is None and self.restaurant_id is None:
+            raise ValueError("outlet_id or restaurant_id is required")
+        if self.outlet_id and self.restaurant_id and self.outlet_id != self.restaurant_id:
+            raise ValueError("restaurant_id and outlet_id must match during compatibility period")
+        resolved = self.outlet_id or self.restaurant_id
+        object.__setattr__(self, "outlet_id", resolved)
+        object.__setattr__(self, "restaurant_id", resolved)
+        return self
 
     @field_validator("schema_version", mode="before")
     @classmethod

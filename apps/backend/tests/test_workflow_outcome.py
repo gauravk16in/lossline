@@ -146,6 +146,23 @@ async def test_recovery_events_resolve_incident_idempotently(db_session) -> None
     db_session.add(incident)
     await db_session.flush()
     for index in range(3):
+        order_id = f"pre_ord_{index}"
+        db_session.add(Event(event_id=f"pre_{index}", restaurant_id="outlet_1",
+            source="pos", event_type="order.created",
+            occurred_at=window_end - timedelta(minutes=index + 1),
+            entity={"type": "order", "id": order_id},
+            data={"channel": "delivery", "amount": 300, "currency": "INR"},
+            metadata_json={"synthetic": True}, schema_version="1.0",
+            payload_hash=f"pre_hash_{index}", published_to_stream=True))
+        db_session.add(Event(event_id=f"pre_cancel_{index}", restaurant_id="outlet_1",
+            source="pos", event_type="order.cancelled",
+            occurred_at=window_end - timedelta(seconds=30 + index),
+            entity={"type": "order", "id": order_id},
+            data={"channel": "delivery", "amount": 300, "currency": "INR",
+                  "reason_code": "DELAY"}, metadata_json={"synthetic": True},
+            schema_version="1.0", payload_hash=f"pre_cancel_hash_{index}",
+            published_to_stream=True))
+    for index in range(3):
         db_session.add(
             Event(
                 event_id=f"recovery_{index}",
@@ -193,6 +210,20 @@ async def test_insufficient_outcome_is_rechecked_after_recovery_events(db_sessio
     )
     db_session.add(incident)
     await db_session.flush()
+    for index in range(3):
+        order_id = f"retry_pre_{index}"
+        db_session.add(Event(event_id=f"retry_pre_create_{index}", restaurant_id="outlet_retry",
+            source="pos", event_type="order.created", occurred_at=window_end - timedelta(minutes=index + 1),
+            entity={"type": "order", "id": order_id},
+            data={"channel": "delivery", "amount": 300, "currency": "INR"},
+            metadata_json={"synthetic": True}, schema_version="1.0",
+            payload_hash=f"retry_pre_hash_{index}", published_to_stream=True))
+        db_session.add(Event(event_id=f"retry_pre_cancel_{index}", restaurant_id="outlet_retry",
+            source="pos", event_type="order.cancelled", occurred_at=window_end - timedelta(seconds=30 + index),
+            entity={"type": "order", "id": order_id},
+            data={"channel": "delivery", "amount": 300, "currency": "INR", "reason_code": "DELAY"},
+            metadata_json={"synthetic": True}, schema_version="1.0",
+            payload_hash=f"retry_pre_cancel_hash_{index}", published_to_stream=True))
 
     first = await verify_incident_outcome(db_session, incident)
     assert first.status == "INSUFFICIENT_DATA"

@@ -10,6 +10,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.db.models import Base  # noqa: E402
 from src.db.session import get_db_session  # noqa: E402
 from src.main import app  # noqa: E402
+from src.api.security import require_admin_key, require_ingest_key, require_manager_key  # noqa: E402
+from src.config import settings  # noqa: E402
+
+settings.ALLOW_GLOBAL_DEMO_RESET = True
+settings.ENABLE_SYNTHETIC_FIXTURE_BASELINES = True
 
 import logging  # noqa: E402
 
@@ -73,8 +78,14 @@ async def client_override(db_session):
         yield db_session
 
     app.dependency_overrides[get_db_session] = _get_db_session_override
+    app.dependency_overrides[require_ingest_key] = lambda: None
+    app.dependency_overrides[require_manager_key] = lambda: None
+    app.dependency_overrides[require_admin_key] = lambda: None
     yield
     app.dependency_overrides.pop(get_db_session, None)
+    app.dependency_overrides.pop(require_ingest_key, None)
+    app.dependency_overrides.pop(require_manager_key, None)
+    app.dependency_overrides.pop(require_admin_key, None)
 
 
 class MockRedisClient:

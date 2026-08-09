@@ -1,1 +1,60 @@
-/* All styling handled by MUI ThemeProvider + CssBaseline. This file intentionally minimal. */
+/* ── LOSSLine Global Styles ── */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #0B0F1A;
+  color: #F4F7FB;
+  overflow-x: hidden;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Selection */
+::selection {
+  background: rgba(124, 92, 252, 0.3);
+  color: #F4F7FB;
+}
+
+/* Focus outline for accessibility */
+:focus-visible {
+  outline: 2px solid rgba(124, 92, 252, 0.6);
+  outline-offset: 2px;
+}
+
+/* Smooth transitions for all interactive elements */
+a, button {
+  transition: all 150ms ease;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}

@@ -24,6 +24,7 @@ def create_event(
     entity_id: str,
     data: Dict[str, Any],
     sequence: int,
+    scenario_run_id: str | None = None,
 ) -> Dict[str, Any]:
     """
     Creates a canonical event dictionary matching the validation schema.
@@ -32,6 +33,7 @@ def create_event(
         "schema_version": "1.0",
         "event_id": event_id,
         "restaurant_id": RESTAURANT_ID,
+        "outlet_id": RESTAURANT_ID,
         "source": source,
         "event_type": event_type,
         "occurred_at": occurred_at.isoformat(),
@@ -41,12 +43,13 @@ def create_event(
             "synthetic": True,
             "scenario_id": SCENARIO_ID,
             "sequence": sequence,
+            "scenario_run_id": scenario_run_id,
         },
     }
 
 
 def generate_scenario_events(
-    start_time: datetime, seed: int = 42
+    start_time: datetime, seed: int = 42, scenario_run_id: str | None = None
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Generates historical baseline, pre-approval live, and post-approval recovery events.
@@ -66,16 +69,15 @@ def generate_scenario_events(
         start_time = start_time.astimezone(timezone.utc)
 
     # =========================================================================
-    # PART 1: 7-DAY HISTORICAL BASELINE EVENTS
+    # PART 1: OBSERVED HISTORICAL BASELINE WINDOWS
     # =========================================================================
-    # Generates standard daily lunches (12:00 PM to 2:30 PM) for the past 7 days.
-    for day in range(7, 0, -1):
-        day_start = start_time - timedelta(days=day)
-        # Generate normal orders (12:00 PM to 2:00 PM)
-        # Average 25 orders per day, normal wait times, zero/low cancellations
-        lunch_time = day_start.replace(hour=12, minute=0, second=0, microsecond=0)
+    # The operational pipeline computes contiguous prior 30-minute windows,
+    # so populate those exact windows with real synthetic input events.
+    live_anchor = start_time.replace(hour=12, minute=0, second=0, microsecond=0)
+    for day in range(4, 0, -1):
+        lunch_time = live_anchor - timedelta(minutes=30 * day)
         for order_idx in range(25):
-            order_time = lunch_time + timedelta(minutes=int(random.uniform(0, 120)))
+            order_time = lunch_time + timedelta(seconds=order_idx * 20)
             ord_id = f"ord_base_{day}_{order_idx}"
             sku = random.choice(list(ITEMS.keys()))
             price = ITEMS[sku]["price"]
@@ -96,8 +98,24 @@ def generate_scenario_events(
             )
             seq_counter += 1
 
+            if order_idx == 0:
+                baseline_events.append(
+                    create_event(
+                        event_id=f"evt_base_cancel_{day}_{order_idx}",
+                        source="pos",
+                        event_type="order.cancelled",
+                        occurred_at=order_time + timedelta(minutes=2),
+                        entity_type="order",
+                        entity_id=ord_id,
+                        data={"channel": channel, "amount": price, "currency": "INR",
+                              "reason_code": "CUSTOMER_REQUEST"},
+                        sequence=seq_counter,
+                    )
+                )
+                seq_counter += 1
+
             # Order completed (with normal wait times, e.g. 15-25 minutes)
-            wait_sec = random.uniform(900, 1500)
+            wait_sec = random.uniform(600, 900)
             complete_time = order_time + timedelta(seconds=int(wait_sec))
 
             baseline_events.append(
@@ -175,10 +193,10 @@ def generate_scenario_events(
         )
         seq_counter += 1
 
-    # --- PHASE B: Demand Surge Phase (Minute 15 to 45) ---
-    # A massive wave of delivery orders arrives (20 orders in 30 minutes)
-    for idx in range(20):
-        order_time = live_start + timedelta(minutes=15) + timedelta(seconds=idx * 90)
+    # --- PHASE B: Demand Surge Phase (Minute 30 to 42) ---
+    # Keep all required evidence in the same [12:30, 13:00) window.
+    for idx in range(24):
+        order_time = live_start + timedelta(minutes=30, seconds=idx * 30)
         ord_id = f"ord_live_surge_{idx}"
         sku = "MEGHANA_SPECIAL_CHICKEN_BIRYANI"
         price = ITEMS[sku]["price"]
@@ -197,7 +215,7 @@ def generate_scenario_events(
         )
         seq_counter += 1
 
-    # --- PHASE C: Degradation Phase (Minute 45 to 65) ---
+    # --- PHASE C: Degradation Phase (Minute 45 to 58) ---
     # 1. Handoff wait times spike for completed deliveries (3 completed with high wait)
     degrade_start = live_start + timedelta(minutes=45)
     for idx in range(3):
@@ -221,7 +239,7 @@ def generate_scenario_events(
         seq_counter += 1
 
     # Preparation time is required evidence for the overload rule.
-    for idx in range(6):
+    for idx in range(8):
         prep_time = degrade_start + timedelta(minutes=idx * 2)
         ord_id = f"ord_live_surge_{idx}"
         pre_approval_events.append(
@@ -240,7 +258,7 @@ def generate_scenario_events(
 
     # Order cancellations surge due to preparation delays.
     for idx in range(5):
-        cancel_time = degrade_start + timedelta(minutes=7) + timedelta(minutes=idx * 2)
+        cancel_time = degrade_start + timedelta(minutes=5 + idx)
         ord_id = f"ord_live_surge_{idx + 5}"
         price = ITEMS["MEGHANA_SPECIAL_CHICKEN_BIRYANI"]["price"]
         reason = "PREPARATION_DELAY"
@@ -376,4 +394,6 @@ def generate_scenario_events(
     )
     seq_counter += 1
 
+    for event in (*baseline_events, *pre_approval_events, *post_approval_events):
+        event["metadata"]["scenario_run_id"] = scenario_run_id
     return baseline_events, pre_approval_events, post_approval_events

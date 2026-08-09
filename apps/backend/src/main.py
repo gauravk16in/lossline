@@ -3,6 +3,8 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 from redis.asyncio import Redis
 from sqlalchemy import text
 
@@ -78,13 +80,27 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > settings.MAX_REQUEST_BYTES:
+            return JSONResponse({"detail": "Request body exceeds 256 KiB limit"}, status_code=413)
+        body = await request.body()
+        if len(body) > settings.MAX_REQUEST_BYTES:
+            return JSONResponse({"detail": "Request body exceeds 256 KiB limit"}, status_code=413)
+        return await call_next(request)
+
+
+app.add_middleware(RequestSizeLimitMiddleware)
+
 # Setup CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For demo / development convenience. Adjust as needed.
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-LOSSLine-Key"],
 )
 
 # Include API routes

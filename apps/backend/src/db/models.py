@@ -68,6 +68,13 @@ class Event(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     event_id = Column(String, unique=True, nullable=False, index=True)
     restaurant_id = Column(String, ForeignKey("restaurants.id"), nullable=False)
+    outlet_id = Column(
+        String,
+        nullable=False,
+        index=True,
+        default=lambda context: context.get_current_parameters()["restaurant_id"],
+    )
+    scenario_run_id = Column(String, nullable=True, index=True)
     source = Column(String, nullable=False)
     event_type = Column(String, nullable=False)
     occurred_at = Column(DateTime(timezone=True), nullable=False)
@@ -81,6 +88,10 @@ class Event(Base):
     schema_version = Column(String, nullable=False)
     payload_hash = Column(String, nullable=False)
     published_to_stream = Column(Boolean, default=False, nullable=False, index=True)
+    outbox_claimed_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    outbox_attempt_count = Column(Integer, nullable=False, default=0)
+    outbox_last_error = Column(String, nullable=True)
+    outbox_published_at = Column(DateTime(timezone=True), nullable=True)
 
     restaurant = relationship("Restaurant", back_populates="events")
 

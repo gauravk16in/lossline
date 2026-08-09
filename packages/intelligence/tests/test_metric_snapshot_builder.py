@@ -146,18 +146,28 @@ def test_order_count_and_delivery_channel() -> None:
 
 def test_cancellation_rate_computed_correctly() -> None:
     events = [
-        _evt("e1", "order.created", 1, channel="pos"),
-        _evt("e2", "order.created", 2, channel="pos"),
+        _evt("e1", "order.created", 1, channel="pos", entity_id="order-1"),
+        _evt("e2", "order.created", 2, channel="pos", entity_id="order-2"),
         _evt("e3", "order.created", 3, channel="pos"),
         _evt("e4", "order.created", 4, channel="pos"),
-        _evt("e5", "order.cancelled", 5, channel="pos"),
-        _evt("e6", "order.cancelled", 6, channel="pos"),
+        _evt("e5", "order.cancelled", 5, channel="pos", entity_id="order-1"),
+        _evt("e6", "order.cancelled", 6, channel="pos", entity_id="order-2"),
     ]
     snap = _build(events=events)
     assert snap.order_count == 4
     assert snap.cancelled_order_count == 2
     # 2/4 = 0.5
     assert snap.cancellation_rate == Decimal("0.5000")
+
+
+def test_unmatched_pre_window_cancellation_is_excluded() -> None:
+    events = [
+        _evt("created", "order.created", 1, channel="pos", entity_id="new-order"),
+        _evt("cancelled", "order.cancelled", 2, channel="pos", entity_id="old-order"),
+    ]
+    snap = _build(events=events)
+    assert snap.cancelled_order_count == 0
+    assert snap.cancellation_rate == Decimal("0.0000")
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +268,9 @@ def test_source_event_ids_contains_all_contributing_events() -> None:
 def test_full_scenario_snapshot() -> None:
     """One order, one cancellation, one prep, one handoff, two reviews."""
     events = [
-        _evt("o1", "order.created", 1, channel="delivery"),
+        _evt("o1", "order.created", 1, channel="delivery", entity_id="order-1"),
         _evt("o2", "order.created", 2, channel="pos"),
-        _evt("c1", "order.cancelled", 3, channel="delivery"),
+        _evt("c1", "order.cancelled", 3, channel="delivery", entity_id="order-1"),
         _evt("p1", "preparation.completed", 5, duration_seconds=240.0),  # 4 min
         _evt("h1", "delivery.handoff_completed", 8, wait_seconds=120.0),  # 2 min
         _evt("rv1", "review.received", 10, rating=1, text="so delayed and cold"),

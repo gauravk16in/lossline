@@ -41,6 +41,7 @@ from src.config import settings
 from src.demo.entities import DEMO_RESTAURANTS
 from src.intelligence.outcomes import verify_incident_outcome
 from src.intelligence.predictive_persistence import select_forecast_strategy
+from src.api.security import require_admin_key, require_ingest_key, require_manager_key
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ def compute_payload_hash(envelope: EventEnvelope) -> str:
 
 @router.post("/events", status_code=202)
 async def ingest_event(
-    envelope: EventEnvelope, db: AsyncSession = Depends(get_db_session)
+    envelope: EventEnvelope, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_ingest_key),
 ):
     """
     Ingests canonical events, checking for duplicates and auto-provisioning restaurants.
@@ -114,6 +116,8 @@ async def ingest_event(
     new_event = Event(
         event_id=envelope.event_id,
         restaurant_id=envelope.restaurant_id,
+        outlet_id=envelope.outlet_id,
+        scenario_run_id=envelope.metadata.scenario_run_id,
         source=envelope.source.value,
         event_type=envelope.event_type.value,
         occurred_at=envelope.occurred_at,
@@ -189,7 +193,18 @@ async def get_incident(id: int, db: AsyncSession = Depends(get_db_session)):
     incident = result.scalars().first()
     if not incident:
         raise HTTPException(status_code=404, detail="Incident not found")
-    return incident
+    return {
+        column.name: getattr(incident, column.name) for column in Incident.__table__.columns
+    } | {
+        "signals": [
+            {column.name: getattr(signal, column.name) for column in Signal.__table__.columns}
+            for signal in incident.signals
+        ],
+        "recommendations": [
+            {column.name: getattr(rec, column.name) for column in Recommendation.__table__.columns}
+            for rec in incident.recommendations
+        ],
+    }
 
 
 class DecisionPayload(BaseModel):
@@ -231,11 +246,16 @@ async def get_predictive_today(outlet_id: str, service_window: str,
         ForecastRecord.service_window == service_window,
     ).order_by(ForecastRecord.window_start, ForecastRecord.sku_id))).scalars().all()
     forecast_ids = [row.forecast_id for row in forecasts]
+    snapshot_ids = [row.feature_snapshot_id for row in forecasts]
+    snapshots = [] if not snapshot_ids else (await db.execute(select(
+        PredictiveFeatureSnapshot).where(
+        PredictiveFeatureSnapshot.snapshot_id.in_(snapshot_ids)))).scalars().all()
     inventories = [] if not forecast_ids else (await db.execute(select(InventoryProjectionRecord).where(
         InventoryProjectionRecord.forecast_id.in_(forecast_ids)))).scalars().all()
-    capacities = [] if not forecast_ids else (await db.execute(select(CapacityProjectionRecord).where(
-        CapacityProjectionRecord.outlet_id == outlet_id,
-        CapacityProjectionRecord.forecast_id.in_(forecast_ids)))).scalars().all()
+    capacity_rows = (await db.execute(select(CapacityProjectionRecord).where(
+        CapacityProjectionRecord.outlet_id == outlet_id))).scalars().all()
+    capacities = [row for row in capacity_rows
+        if row.payload.get("service_window") == service_window]
     risks = [] if not forecast_ids else (await db.execute(select(RiskCandidateRecord).where(
         RiskCandidateRecord.forecast_id.in_(forecast_ids)))).scalars().all()
     drivers = [] if not forecast_ids else (await db.execute(select(DriverEvidenceRecord).where(
@@ -249,8 +269,13 @@ async def get_predictive_today(outlet_id: str, service_window: str,
         PredictiveDecisionRecord.dossier_id.in_(dossier_ids)))).scalars().all()
     outcomes = [] if not forecast_ids else (await db.execute(select(ActualOutcomeRecord).where(
         ActualOutcomeRecord.forecast_id.in_(forecast_ids)))).scalars().all()
+    evaluations = [] if not forecast_ids else (await db.execute(select(
+        PredictiveEvaluationRecord).where(
+        PredictiveEvaluationRecord.forecast_id.in_(forecast_ids)).order_by(
+        PredictiveEvaluationRecord.created_at))).scalars().all()
     return {"outlet_id": outlet_id, "service_window": service_window,
         "forecasts": [row.payload for row in forecasts],
+        "feature_snapshots": [row.payload for row in snapshots],
         "inventory_projections": [row.payload for row in inventories],
         "capacity_projections": [row.payload for row in capacities],
         "risks": [row.payload for row in risks], "drivers": [row.payload for row in drivers],
@@ -258,7 +283,20 @@ async def get_predictive_today(outlet_id: str, service_window: str,
         "decisions": [{"decision": row.payload, "status": row.status,
             "manager_decision": row.manager_decision} for row in decisions],
         "outcomes": [row.payload for row in outcomes],
+        "evaluations": [{"evaluation_id": row.evaluation_id,
+            "evaluation_type": row.evaluation_type, "forecast_id": row.forecast_id,
+            "decision_id": row.decision_id, "evaluation": row.payload}
+            for row in evaluations],
         "synthetic": True}
+
+
+@router.get("/predictive/features/{snapshot_id}")
+async def get_predictive_feature_snapshot(snapshot_id: str,
+    db: AsyncSession = Depends(get_db_session)):
+    row = await db.get(PredictiveFeatureSnapshot, snapshot_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Feature snapshot not found")
+    return row.payload
 
 
 @router.get("/predictive/projections/inventory/{projection_id}")
@@ -294,7 +332,7 @@ async def get_predictive_decision(decision_id: str, db: AsyncSession = Depends(g
 
 @router.post("/predictive/decisions/{decision_id}/review")
 async def review_predictive_decision(decision_id: str, payload: PredictiveManagerReviewPayload,
-    db: AsyncSession = Depends(get_db_session)):
+    db: AsyncSession = Depends(get_db_session), _: None = Depends(require_manager_key)):
     if not payload.manager_id.strip() or not payload.idempotency_key.strip():
         raise HTTPException(status_code=422, detail="manager_id and idempotency_key must be non-empty")
     replay = (await db.execute(select(PredictiveDecisionRecord).where(
@@ -371,7 +409,8 @@ async def predictive_analytics_summary(db: AsyncSession = Depends(get_db_session
 
 @router.post("/demo/runs", status_code=201)
 async def create_demo_run(
-    payload: ScenarioRunPayload, db: AsyncSession = Depends(get_db_session)
+    payload: ScenarioRunPayload, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_admin_key),
 ):
     if not settings.DEMO_MODE:
         raise HTTPException(status_code=403, detail="Demo runs are disabled")
@@ -387,7 +426,8 @@ async def create_demo_run(
 
 
 @router.post("/demo/runs/{id}/complete")
-async def complete_demo_run(id: int, db: AsyncSession = Depends(get_db_session)):
+async def complete_demo_run(id: int, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_admin_key)):
     run = (
         (await db.execute(select(ScenarioRun).where(ScenarioRun.id == id)))
         .scalars()
@@ -400,9 +440,45 @@ async def complete_demo_run(id: int, db: AsyncSession = Depends(get_db_session))
     return run
 
 
+@router.delete("/demo/runs/{run_id}")
+async def delete_demo_run(run_id: str, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_admin_key)):
+    """Delete only synthetic artifacts attributable to one scenario run."""
+    if not settings.DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Demo runs are disabled")
+    run = await db.get(ScenarioRun, int(run_id)) if run_id.isdigit() else None
+    if run is None:
+        raise HTTPException(status_code=404, detail="Scenario run not found")
+    event_rows = (await db.execute(select(Event).where(
+        Event.scenario_run_id == run_id,
+    ))).scalars().all()
+    event_ids = {row.event_id for row in event_rows}
+    signal_rows = (await db.execute(select(Signal))).scalars().all()
+    signal_ids = {row.id for row in signal_rows if event_ids.intersection(row.evidence_event_ids)}
+    incident_ids = set()
+    if signal_ids:
+        incident_ids = set((await db.execute(select(incident_signals.c.incident_id).where(
+            incident_signals.c.signal_id.in_(signal_ids)))).scalars().all())
+    if incident_ids:
+        await db.execute(delete(Outcome).where(Outcome.incident_id.in_(incident_ids)))
+        recommendation_ids = set((await db.execute(select(Recommendation.id).where(
+            Recommendation.incident_id.in_(incident_ids)))).scalars().all())
+        if recommendation_ids:
+            await db.execute(delete(Action).where(Action.recommendation_id.in_(recommendation_ids)))
+        await db.execute(delete(Recommendation).where(Recommendation.incident_id.in_(incident_ids)))
+        await db.execute(delete(incident_signals).where(incident_signals.c.incident_id.in_(incident_ids)))
+        await db.execute(delete(Incident).where(Incident.id.in_(incident_ids)))
+    if signal_ids:
+        await db.execute(delete(Signal).where(Signal.id.in_(signal_ids)))
+    await db.execute(delete(Event).where(Event.scenario_run_id == run_id))
+    await db.delete(run)
+    return {"status": "success", "run_id": run_id, "deleted_event_count": len(event_ids)}
+
+
 @router.post("/incidents/{id}/decision")
 async def submit_decision(
-    id: int, payload: DecisionPayload, db: AsyncSession = Depends(get_db_session)
+    id: int, payload: DecisionPayload, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_manager_key),
 ):
     """
     Submits a manager action decision (Approve, Reject, or Edit).
@@ -460,12 +536,11 @@ async def submit_decision(
     )
 
     if payload.decision in ["APPROVE", "EDIT"]:
-        incident.status = "ACTION_APPROVED"  # type: ignore[assignment]
-        new_action.execution_status = "EXECUTED"  # type: ignore[assignment]
-        new_action.executed_at = now_utc  # type: ignore[assignment]
+        incident.status = "APPROVED_PENDING_EXECUTION"  # type: ignore[assignment]
+        new_action.execution_status = "PENDING"  # type: ignore[assignment]
     else:
         incident.status = "ACTION_REJECTED"  # type: ignore[assignment]
-        new_action.execution_status = "FAILED"  # type: ignore[assignment]
+        new_action.execution_status = "NOT_APPLICABLE"  # type: ignore[assignment]
 
     db.add(new_action)
     await db.flush()
@@ -484,6 +559,26 @@ async def submit_decision(
     return {"status": "success", "action_id": new_action.id, "duplicate": False}
 
 
+@router.post("/actions/{id}/execution")
+async def acknowledge_execution(id: int, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_manager_key)):
+    action = (await db.execute(
+        select(Action).where(Action.id == id).options(
+            selectinload(Action.recommendation).selectinload(Recommendation.incident)
+        )
+    )).scalars().first()
+    if action is None:
+        raise HTTPException(status_code=404, detail="Action not found")
+    if action.decision not in {"APPROVE", "EDIT"}:
+        raise HTTPException(status_code=409, detail="Rejected action cannot be executed")
+    action.execution_status = "EXECUTED"
+    action.executed_at = datetime.datetime.now(datetime.timezone.utc)
+    incident = action.recommendation.incident
+    incident.status = "ACTION_EXECUTED"
+    await db.flush()
+    return {"status": "success", "action_id": action.id, "execution_status": "EXECUTED"}
+
+
 @router.get("/incidents/{id}/outcome")
 async def get_outcome(id: int, db: AsyncSession = Depends(get_db_session)):
     result = await db.execute(select(Outcome).where(Outcome.incident_id == id))
@@ -494,13 +589,14 @@ async def get_outcome(id: int, db: AsyncSession = Depends(get_db_session)):
 
 
 @router.post("/incidents/{id}/verify")
-async def verify_outcome(id: int, db: AsyncSession = Depends(get_db_session)):
+async def verify_outcome(id: int, db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_manager_key)):
     incident = (
         (await db.execute(select(Incident).where(Incident.id == id))).scalars().first()
     )
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
-    if incident.status not in {"ACTION_APPROVED", "VERIFYING"}:
+    if incident.status not in {"ACTION_EXECUTED", "VERIFYING"}:
         raise HTTPException(status_code=409, detail="Incident is not ready to verify")
     outcome = await verify_incident_outcome(db, incident)
     await manager.broadcast_transition(
@@ -541,7 +637,7 @@ async def reset_demo(db: AsyncSession = Depends(get_db_session)):
     """
     Cleans synthetic run-derived records from the tables to support clean repeatable scenarios.
     """
-    if not settings.DEMO_MODE:
+    if not settings.DEMO_MODE or not settings.ALLOW_GLOBAL_DEMO_RESET:
         raise HTTPException(status_code=403, detail="Demo reset is disabled")
     logger.info("Executing demo database reset.")
     try:
@@ -581,7 +677,13 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket channel for fanning out operational stage changes.
     """
-    await manager.connect(websocket)
+    origin = websocket.headers.get("origin")
+    allowed = {item.strip() for item in settings.WS_ALLOWED_ORIGINS.split(",") if item.strip()}
+    protocols = {item.strip() for item in websocket.headers.get("sec-websocket-protocol", "").split(",")}
+    if origin not in allowed or not settings.MANAGER_API_KEY or settings.MANAGER_API_KEY not in protocols:
+        await websocket.close(code=1008)
+        return
+    await manager.connect(websocket, subprotocol=settings.MANAGER_API_KEY)
     try:
         while True:
             # Keep connection alive by waiting for messages (or ignoring them for MVP)

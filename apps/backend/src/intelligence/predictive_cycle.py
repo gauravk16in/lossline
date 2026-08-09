@@ -18,17 +18,25 @@ from lossline_intelligence.decisioning import (
     ActionRisk, DecisionAction, DecisionCandidate, DecisionPolicy, GuardResult,
     RiskType, Urgency,
 )
-from lossline_intelligence.dossiers import ArtifactRef, DataQualitySummary, build_forecast_dossier
-from lossline_intelligence.features.snapshot import (
-    DatasetRow, FeatureSnapshot, SnapshotQuality, compute_fingerprint, compute_snapshot_id,
+from lossline_intelligence.dossiers import (
+    ArtifactRef, CuratedSummary, DataQualitySummary, HistoricalPerformanceSummary,
+    build_forecast_dossier,
 )
-from lossline_intelligence.forecasts.baseline import BaselineAbstention, BaselineForecast, forecast_baseline
+from lossline_intelligence.features.catalog import build_demo_registry
+from lossline_intelligence.features.pipeline import (
+    SkuFeatureInput, WindowFeatureInput, build_snapshot,
+)
+from lossline_intelligence.features.snapshot import DatasetRow, FeatureSnapshot
+from lossline_intelligence.forecasts.baseline import (
+    BaselineAbstention, BaselineForecast, evaluate_rolling_baseline, forecast_baseline,
+)
 from lossline_intelligence.inventory import project_inventory
 from lossline_intelligence.narratives import generate_predictive_explanation
 from lossline_intelligence.outcomes import (
     ActualOutcomeStatus, evaluate_decision_outcome, evaluate_forecast_outcome,
     evaluate_risk_predictions, mature_actual_outcome,
 )
+from lossline_intelligence.retrieval import ComparablePeriod, retrieve_context
 
 from src.db.models import (
     Event, ForecastDossierRecord, ForecastRecord, InventoryProjectionRecord,
@@ -43,9 +51,7 @@ from src.intelligence.predictive_persistence import (
 )
 from src.intelligence.predictive_workflow import SqliteReviewCheckpointStore, run_predictive_workflow
 
-PIPELINE_VERSION = "predictive_cycle.v1"
-REGISTRY_VERSION = "demo.v1"
-REGISTRY_FINGERPRINT = "demo-registry-c22"
+PIPELINE_VERSION = "feature_pipeline.v1"
 
 
 def _dt(value: str | datetime) -> datetime:
@@ -54,56 +60,64 @@ def _dt(value: str | datetime) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def _feature_values(data: dict[str, Any], sku: dict[str, Any]) -> dict[str, bool | int | Decimal | str | None]:
+def _snapshot(*, outlet_id: str, data: dict[str, Any], sku: dict[str, Any],
+    prediction_as_of: datetime, source_id: str,
+    prior_sku_fulfilled: int | None = None,
+    prior_window_end: datetime | None = None) -> FeatureSnapshot:
     context = data["context"]
     promoted = context.get("promoted_sku_id") == sku["sku_id"]
-    return {
-        "context.weekday": int(context["weekday"]), "context.service_window": data["service_window"],
-        "context.is_holiday": bool(context.get("holiday", False)),
-        "context.local_event": bool(context.get("local_event", False)),
-        "context.delivery_share": Decimal(str(context.get("delivery_share", 0))),
-        "context.data_quality": Decimal(str(data["data_quality"])),
-        "weather.state": str(context.get("weather_state", "MISSING")),
-        "weather.rainfall_mm": None if context.get("rainfall_mm") is None else Decimal(str(context["rainfall_mm"])),
-        "promotion.active": promoted,
-        "promotion.discount_pct": Decimal(str(context.get("promotion_discount") or 0)) if promoted else Decimal("0"),
-        "inventory.opening_quantity": int(sku["opening_inventory"]),
-        "capacity.available_minutes": Decimal(str(data["available_capacity_minutes"])),
-        "demand.fulfilled_quantity.lag1": None,
-        "sku.base_demand": Decimal(str(sku.get("base_demand", sku.get("actual_demand", 0)))),
-        "sku.workload_minutes": Decimal(str(sku["workload_minutes"])),
-    }
-
-
-def _snapshot(*, outlet_id: str, data: dict[str, Any], sku: dict[str, Any],
-    prediction_as_of: datetime, source_id: str) -> FeatureSnapshot:
-    start, end = _dt(data["window_start"]), _dt(data["window_end"])
-    values = _feature_values(data, sku)
-    missing = ("weather.rainfall_mm",) if values["weather.rainfall_mm"] is None else ()
-    fingerprint = compute_fingerprint(values, PIPELINE_VERSION, REGISTRY_FINGERPRINT)
-    return FeatureSnapshot(snapshot_id=compute_snapshot_id(outlet_id, sku["sku_id"],
-        data["service_window"], start, prediction_as_of, PIPELINE_VERSION),
-        pipeline_version=PIPELINE_VERSION, prediction_as_of=prediction_as_of,
-        outlet_id=outlet_id, sku_id=sku["sku_id"], service_window=data["service_window"],
-        window_start=start, window_end=end, registry_version=REGISTRY_VERSION,
-        registry_fingerprint=REGISTRY_FINGERPRINT, feature_values=values,
-        source_signal_ids=(source_id,), missing_features=missing, imputed_features=(),
-        quality=SnapshotQuality(completeness=Decimal(str(data["data_quality"])),
-            data_sufficiency=True, data_quality_score=Decimal(str(data["data_quality"]))),
-        fingerprint=fingerprint, created_at=prediction_as_of)
+    sku_input = SkuFeatureInput(
+        sku_id=sku["sku_id"],
+        base_demand=Decimal(str(sku.get("base_demand", sku.get("actual_demand", 0)))),
+        workload_minutes=Decimal(str(sku["workload_minutes"])),
+        opening_inventory=int(sku["opening_inventory"]),
+        promoted=promoted,
+        promotion_discount=(
+            Decimal(str(context["promotion_discount"]))
+            if promoted and context.get("promotion_discount") is not None else None
+        ),
+        latent_demand=int(sku.get("actual_demand", 0)),
+        fulfilled=int(sku.get("fulfilled_quantity", 0)),
+        stockout=bool(sku.get("stockout", False)),
+    )
+    window = WindowFeatureInput(
+        outlet_id=outlet_id, service_window=data["service_window"],
+        window_start=_dt(data["window_start"]), window_end=_dt(data["window_end"]),
+        weekday=int(context["weekday"]),
+        weather_state=str(context.get("weather_state", "MISSING")),
+        rainfall_mm=(None if context.get("rainfall_mm") is None
+            else Decimal(str(context["rainfall_mm"]))),
+        is_holiday=bool(context.get("holiday", False)),
+        local_event=bool(context.get("local_event", False)),
+        delivery_share=Decimal(str(context.get("delivery_share", 0))),
+        data_quality=Decimal(str(data["data_quality"])),
+        available_capacity_minutes=Decimal(str(data["available_capacity_minutes"])),
+        sku_inputs=(sku_input,),
+    )
+    snapshot = build_snapshot(window, sku_input, registry=build_demo_registry(),
+        prediction_as_of=prediction_as_of, prior_sku_fulfilled=prior_sku_fulfilled,
+        prior_window_end=prior_window_end)
+    return snapshot.model_copy(update={"source_signal_ids": (source_id,),
+        "created_at": prediction_as_of})
 
 
 async def _history_rows(db: AsyncSession, *, outlet_id: str, prediction_as_of: datetime) -> tuple[DatasetRow, ...]:
     events = (await db.execute(select(Event).where(Event.restaurant_id == outlet_id,
         Event.event_type == "demand.window_observed").order_by(Event.occurred_at))).scalars().all()
     rows: list[DatasetRow] = []
+    prior_by_sku: dict[str, tuple[int, datetime]] = {}
     for event in events:
         data = event.data
         if _dt(data["window_end"]) >= prediction_as_of: continue
         for sku in data["skus"]:
+            prior = prior_by_sku.get(sku["sku_id"])
             snap = _snapshot(outlet_id=outlet_id, data=data, sku=sku,
-                prediction_as_of=_dt(data["window_start"]) - timedelta(hours=1), source_id=event.event_id)
+                prediction_as_of=_dt(data["window_start"]) - timedelta(hours=1),
+                source_id=event.event_id,
+                prior_sku_fulfilled=None if prior is None else prior[0],
+                prior_window_end=None if prior is None else prior[1])
             rows.append(DatasetRow(snap, int(sku["actual_demand"]), int(sku["fulfilled_quantity"]), bool(sku["stockout"])))
+            prior_by_sku[sku["sku_id"]] = (int(sku["fulfilled_quantity"]), _dt(data["window_end"]))
     return tuple(rows)
 
 
@@ -119,8 +133,12 @@ async def process_scheduled_window(db: AsyncSession, envelope: EventEnvelope) ->
     history = await _history_rows(db, outlet_id=envelope.restaurant_id, prediction_as_of=prediction_as_of)
     forecasts: list[BaselineForecast] = []; inventories = []; drivers = []
     for sku in data["skus"]:
+        prior_rows = [row for row in history if row.snapshot.sku_id == sku["sku_id"]]
+        prior = max(prior_rows, key=lambda row: row.snapshot.window_end) if prior_rows else None
         snapshot = _snapshot(outlet_id=envelope.restaurant_id, data=data, sku=sku,
-            prediction_as_of=prediction_as_of, source_id=envelope.event_id)
+            prediction_as_of=prediction_as_of, source_id=envelope.event_id,
+            prior_sku_fulfilled=None if prior is None else prior.observed_demand_quantity,
+            prior_window_end=None if prior is None else prior.snapshot.window_end)
         await persist_feature_snapshot(db, snapshot)
         result = forecast_baseline(snapshot, history, prediction_as_of=prediction_as_of, min_history=4)
         if isinstance(result, BaselineAbstention):
@@ -161,6 +179,31 @@ async def process_scheduled_window(db: AsyncSession, envelope: EventEnvelope) ->
             "severity": capacity.risk_tier.value, "evidence_ids": [capacity.projection_id]})
         risk_refs.append(ArtifactRef(artifact_id=risk_id, artifact_type="risk", version="v1"))
 
+    history_events = (await db.execute(select(Event).where(
+        Event.restaurant_id == envelope.restaurant_id,
+        Event.event_type == "demand.window_observed",
+        Event.occurred_at < prediction_as_of).order_by(Event.occurred_at))).scalars().all()
+    comparable_periods = tuple(ComparablePeriod(
+        period_id=f"period_{event.event_id}", outlet_id=envelope.restaurant_id,
+        service_window=event.data["service_window"],
+        window_start=_dt(event.data["window_start"]), sku_id=None, risk_type=None,
+        summary=(f"Observed {sum(int(item['actual_demand']) for item in event.data['skus'])} "
+            f"orders in the {event.data['service_window']} window."),
+        evidence_ids=(event.event_id,),
+    ) for event in history_events)
+    retrieval = retrieve_context(outlet_id=envelope.restaurant_id,
+        service_window=data["service_window"], prediction_as_of=prediction_as_of,
+        comparable_periods=comparable_periods)
+    similar_periods = tuple(CuratedSummary(summary_id=item.item_id,
+        summary_type=item.source_type, text=item.summary,
+        evidence_ids=item.evidence_ids) for item in retrieval.structured)
+    baseline_metrics = evaluate_rolling_baseline(history, min_history=4)
+    historical_performance = (() if baseline_metrics.mae is None else (
+        HistoricalPerformanceSummary(evaluation_id="history_baseline_rolling",
+            sample_count=baseline_metrics.forecast_count,
+            mae=baseline_metrics.mae, wmape=baseline_metrics.wmape),
+    ))
+
     dossier = build_forecast_dossier(outlet_id=envelope.restaurant_id,
         service_window=data["service_window"], window_start=_dt(data["window_start"]),
         window_end=_dt(data["window_end"]), prediction_as_of=prediction_as_of,
@@ -170,6 +213,8 @@ async def process_scheduled_window(db: AsyncSession, envelope: EventEnvelope) ->
         capacity_refs=(ArtifactRef(artifact_id=capacity.projection_id, artifact_type="capacity", version=capacity.rule_version),),
         risk_refs=tuple(risk_refs), driver_refs=tuple(ArtifactRef(artifact_id=d.driver_id,
             artifact_type="driver", version=d.rule_version) for d in drivers),
+        historical_performance=historical_performance,
+        similar_periods=similar_periods,
         data_quality=DataQualitySummary(tier="HIGH" if Decimal(str(data["data_quality"])) >= Decimal("0.8") else "LOW"),
         provenance_ids=(envelope.event_id,), created_at=prediction_as_of)
     await persist_dossier(db, dossier)

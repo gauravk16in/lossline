@@ -42,8 +42,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const location = useLocation();
 
   const navItems: NavItem[] = [
-    { label: 'Overview', path: '/', icon: faGaugeHigh },
-    { label: 'Predictive Today', path: '/predictive', icon: faChartLine },
+    { label: 'Today', path: '/', icon: faGaugeHigh },
+    { label: 'Forecasts & Evidence', path: '/predictive', icon: faChartLine },
     {
       label: 'Incidents',
       path: '/incidents',
@@ -68,8 +68,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         '& .MuiDrawer-paper': {
           width: SIDEBAR_WIDTH,
           boxSizing: 'border-box',
-          backgroundColor: '#FFFFFF',
-          borderRight: '1px solid rgba(0,0,0,0.06)',
+          backgroundColor: '#0C1320',
+          borderRight: '1px solid rgba(255,255,255,0.07)',
           boxShadow: 'none',
           display: 'flex',
           flexDirection: 'column',

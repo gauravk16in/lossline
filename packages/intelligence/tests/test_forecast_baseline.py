@@ -176,6 +176,20 @@ def test_global_backoff_handles_different_weekday() -> None:
     assert result.scope is BaselineScope.GLOBAL
 
 
+def test_different_weekday_preserves_sku_before_cross_sku_backoff() -> None:
+    rows = history(50, 52, 54, 56, weekday=1)
+    rows += history(10, 12, 14, 16, sku_id="sku_b", weekday=2)
+    target = row(5, demand=99, weekday=5).snapshot
+
+    result = forecast_baseline(target, rows, prediction_as_of=target.window_start)
+
+    assert isinstance(result, BaselineForecast)
+    assert result.scope is BaselineScope.OUTLET_SKU_WINDOW
+    assert result.point_demand == Decimal("53.0000")
+    assert {row.snapshot.sku_id for row in rows
+        if row.snapshot.snapshot_id in result.source_snapshot_ids} == {"sku_a"}
+
+
 def test_target_window_before_as_of_abstains() -> None:
     target = row(4, demand=99).snapshot
     result = forecast_baseline(
@@ -219,4 +233,3 @@ def test_invalid_min_history_and_naive_as_of_rejected() -> None:
             (),
             prediction_as_of=target.window_start.replace(tzinfo=None),
         )
-

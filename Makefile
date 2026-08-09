@@ -5,7 +5,7 @@ PYTHON := $(VENV)/bin/python
 PIP := $(VENV)/bin/pip
 PYTEST := $(VENV)/bin/pytest
 ALEMBIC := $(VENV)/bin/alembic
-PYTHONPATH := apps/backend:packages/intelligence/src
+PYTHONPATH := apps/backend:packages/intelligence/src:simulator
 
 setup:
 	python3.12 -m venv $(VENV)

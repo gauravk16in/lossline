@@ -35,6 +35,8 @@ _DP = Decimal("0.0001")
 class BaselineScope(StrEnum):
     OUTLET_SKU_WEEKDAY_WINDOW = "OUTLET_SKU_WEEKDAY_WINDOW"
     SKU_WEEKDAY_WINDOW = "SKU_WEEKDAY_WINDOW"
+    OUTLET_SKU_WINDOW = "OUTLET_SKU_WINDOW"
+    SKU_WINDOW = "SKU_WINDOW"
     OUTLET_CATEGORY_WEEKDAY_WINDOW = "OUTLET_CATEGORY_WEEKDAY_WINDOW"
     CATEGORY_WEEKDAY_WINDOW = "CATEGORY_WEEKDAY_WINDOW"
     GLOBAL_WEEKDAY_WINDOW = "GLOBAL_WEEKDAY_WINDOW"
@@ -175,6 +177,14 @@ def _matches(
         )
     if scope is BaselineScope.SKU_WEEKDAY_WINDOW:
         return source.sku_id == target.sku_id and same_weekday and same_window
+    if scope is BaselineScope.OUTLET_SKU_WINDOW:
+        return (
+            source.outlet_id == target.outlet_id
+            and source.sku_id == target.sku_id
+            and same_window
+        )
+    if scope is BaselineScope.SKU_WINDOW:
+        return source.sku_id == target.sku_id and same_window
     if scope is BaselineScope.OUTLET_CATEGORY_WEEKDAY_WINDOW:
         return (
             target_category is not None
@@ -349,4 +359,3 @@ def evaluate_rolling_baseline(
         _DP, rounding=ROUND_HALF_UP
     )
     return BaselineMetrics(len(errors), abstentions, mae, rmse, wmape, bias)
-

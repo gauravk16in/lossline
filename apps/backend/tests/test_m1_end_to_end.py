@@ -77,6 +77,12 @@ async def test_m1_api_detection_approval_recovery_outcome(client_override, db_se
             },
         )
         assert decision.status_code == 200
+        assert incident.status == "APPROVED_PENDING_EXECUTION"
+        execution = await client.post(
+            f"/api/v1/actions/{decision.json()['action_id']}/execution"
+        )
+        assert execution.status_code == 200
+        assert execution.json()["execution_status"] == "EXECUTED"
 
         for index in range(3):
             db_session.add(

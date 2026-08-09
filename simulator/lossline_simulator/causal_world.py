@@ -150,12 +150,14 @@ _PARAMETERS: Mapping[GoldenScenario, _ScenarioParameters] = {
         capacity_minutes=Decimal("1200"),
     ),
     GoldenScenario.PROMOTION_LIMITED_INVENTORY: _ScenarioParameters(
-        weekday=2,
+        weekday=5,
         service_window="DINNER",
         general_multiplier=Decimal("1.00"),
+        weather=WeatherState.RAIN,
+        rainfall_mm=Decimal("18"),
         promoted_sku_id="CHICKEN_BIRYANI",
         promotion_discount=Decimal("0.20"),
-        delivery_share=Decimal("0.50"),
+        delivery_share=Decimal("0.68"),
         capacity_minutes=Decimal("1000"),
     ),
     GoldenScenario.WEAK_DEMAND_HIGH_INVENTORY: _ScenarioParameters(
