@@ -65,7 +65,8 @@ For multi-window datasets:
 2. Populate lag features from the immediately preceding window's fulfilled quantity.
 3. Enforce temporal safety: lag data from windows ending after `prediction_as_of` is excluded.
 4. Build a `DatasetRow` for each window × SKU with latent demand as target and stockout as censoring flag.
-5. Compute dataset fingerprint from ordered snapshot fingerprints.
+5. Compute the dataset fingerprint from ordered snapshot fingerprints, targets,
+   observed quantities, and censoring state.
 
 ## Assumptions
 
@@ -82,7 +83,8 @@ For multi-window datasets:
 - Feature values stored as native Python types in a keyed dict.
 - Bool is checked before int in type validation to avoid Python subclass coercion.
 - `created_at` is excluded from fingerprint computation.
-- Dataset fingerprint hashes ordered snapshot fingerprints.
+- Dataset fingerprint hashes ordered features plus label and censoring state, so
+  a model artifact cannot keep the same identity after its training labels change.
 
 ## Failure modes
 
@@ -121,6 +123,7 @@ For multi-window datasets:
 - Multi-SKU row count.
 - Dataset fingerprint reproducibility.
 - Dataset fingerprint sensitivity to changed data.
+- Dataset fingerprint sensitivity to changed targets, observations, and censoring.
 - Full golden scenario dataset fingerprint stability.
 - Naive and inverted window inputs rejected.
 - Empty SKU inputs rejected.

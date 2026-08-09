@@ -11,7 +11,7 @@ SKU and combines them against the window's available station-minutes.
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 import json
@@ -35,9 +35,9 @@ DEFAULT_BASE_PREP_MINUTES: Decimal = Decimal("15")
 DEFAULT_EFFICIENCY_FACTOR: Decimal = Decimal("0.85")
 
 # Risk tier thresholds (utilization ratio)
-_TIER_MODERATE: Decimal = Decimal("0.70")
-_TIER_HIGH: Decimal = Decimal("0.90")
-_TIER_CRITICAL: Decimal = Decimal("1.00")
+DEFAULT_TIER_MODERATE: Decimal = Decimal("0.70")
+DEFAULT_TIER_HIGH: Decimal = Decimal("0.90")
+DEFAULT_TIER_CRITICAL: Decimal = Decimal("1.00")
 
 _DP = Decimal("0.0001")
 _ZERO = Decimal("0")
@@ -49,13 +49,19 @@ _ONE = Decimal("1")
 # ---------------------------------------------------------------------------
 
 
-def _compute_risk_tier(utilization: Decimal) -> CapacityRiskTier:
+def _compute_risk_tier(
+    utilization: Decimal,
+    *,
+    moderate_threshold: Decimal = DEFAULT_TIER_MODERATE,
+    high_threshold: Decimal = DEFAULT_TIER_HIGH,
+    critical_threshold: Decimal = DEFAULT_TIER_CRITICAL,
+) -> CapacityRiskTier:
     """Map utilization ratio to a capacity risk tier."""
-    if utilization >= _TIER_CRITICAL:
+    if utilization >= critical_threshold:
         return CapacityRiskTier.CRITICAL
-    if utilization >= _TIER_HIGH:
+    if utilization >= high_threshold:
         return CapacityRiskTier.HIGH
-    if utilization >= _TIER_MODERATE:
+    if utilization >= moderate_threshold:
         return CapacityRiskTier.MODERATE
     return CapacityRiskTier.SAFE
 
@@ -90,7 +96,6 @@ def _compute_projection_id(
 # ---------------------------------------------------------------------------
 
 
-@staticmethod
 def _workload(demand_qty: Decimal, workload_minutes_per_unit: Decimal) -> Decimal:
     """Total workload for one SKU at a given demand scenario."""
     return (demand_qty * workload_minutes_per_unit).quantize(_DP, rounding=ROUND_HALF_UP)
@@ -101,14 +106,17 @@ def project_capacity(
     forecast_id: str,
     outlet_id: str,
     service_window: str,
-    window_start,
-    window_end,
+    window_start: datetime,
+    window_end: datetime,
     # SKU workload specification: list of (demand_point, demand_lower,
     # demand_upper, workload_minutes_per_unit) tuples
     sku_workloads: tuple[tuple[Decimal, Decimal, Decimal, Decimal], ...],
     available_capacity_minutes: Decimal,
     base_prep_minutes: Decimal = DEFAULT_BASE_PREP_MINUTES,
     efficiency_factor: Decimal = DEFAULT_EFFICIENCY_FACTOR,
+    moderate_threshold: Decimal = DEFAULT_TIER_MODERATE,
+    high_threshold: Decimal = DEFAULT_TIER_HIGH,
+    critical_threshold: Decimal = DEFAULT_TIER_CRITICAL,
     rule_version: str = RULE_VERSION,
     evidence_ids: tuple[str, ...] = (),
 ) -> CapacityProjection:
@@ -139,20 +147,57 @@ def project_capacity(
     evidence_ids:
         IDs of input signals or records that inform this projection.
     """
+    for name, value in (
+        ("available_capacity_minutes", available_capacity_minutes),
+        ("base_prep_minutes", base_prep_minutes),
+        ("efficiency_factor", efficiency_factor),
+        ("moderate_threshold", moderate_threshold),
+        ("high_threshold", high_threshold),
+        ("critical_threshold", critical_threshold),
+    ):
+        if not isinstance(value, Decimal) or not value.is_finite():
+            raise ValueError(f"{name} must be a finite Decimal")
     if available_capacity_minutes <= _ZERO:
         raise ValueError("available_capacity_minutes must be positive")
-    if not available_capacity_minutes.is_finite():
-        raise ValueError("available_capacity_minutes must be finite")
+    if base_prep_minutes <= _ZERO:
+        raise ValueError("base_prep_minutes must be positive")
     if not (Decimal("0") < efficiency_factor <= Decimal("1")):
         raise ValueError("efficiency_factor must be in (0, 1]")
+    if not (_ZERO < moderate_threshold < high_threshold < critical_threshold):
+        raise ValueError("risk thresholds must satisfy 0 < moderate < high < critical")
     if not sku_workloads:
         raise ValueError("at least one SKU workload is required")
+    for name, value in (
+        ("forecast_id", forecast_id),
+        ("outlet_id", outlet_id),
+        ("service_window", service_window),
+        ("rule_version", rule_version),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be non-empty")
+    if window_start.tzinfo is None or window_start.utcoffset() is None:
+        raise ValueError("window_start must be timezone-aware")
+    if window_end.tzinfo is None or window_end.utcoffset() is None:
+        raise ValueError("window_end must be timezone-aware")
+    if window_end <= window_start:
+        raise ValueError("window_end must be after window_start")
+    if len(set(evidence_ids)) != len(evidence_ids) or any(
+        not isinstance(item, str) or not item.strip() for item in evidence_ids
+    ):
+        raise ValueError("evidence_ids must be non-empty and unique")
 
     # --- Aggregate workload across all SKUs for each scenario ----------------
     total_point = _ZERO
     total_lower = _ZERO
     total_upper = _ZERO
     for demand_point, demand_lower, demand_upper, per_unit in sku_workloads:
+        values = (demand_point, demand_lower, demand_upper, per_unit)
+        if any(not isinstance(value, Decimal) or not value.is_finite() for value in values):
+            raise ValueError("SKU workload values must be finite Decimals")
+        if demand_lower < _ZERO or demand_point < demand_lower or demand_upper < demand_point:
+            raise ValueError("SKU demand must satisfy 0 <= lower <= point <= upper")
+        if per_unit <= _ZERO:
+            raise ValueError("workload_minutes_per_unit must be positive")
         total_point = total_point + _workload(demand_point, per_unit)
         total_lower = total_lower + _workload(demand_lower, per_unit)
         total_upper = total_upper + _workload(demand_upper, per_unit)
@@ -172,13 +217,31 @@ def project_capacity(
     mean_prep = (base_prep_minutes * congestion).quantize(_DP, rounding=ROUND_HALF_UP)
 
     # --- Risk assessment (based on point-forecast utilization) -------------
-    risk_tier = _compute_risk_tier(util_point)
+    risk_tier = _compute_risk_tier(
+        util_point,
+        moderate_threshold=moderate_threshold,
+        high_threshold=high_threshold,
+        critical_threshold=critical_threshold,
+    )
     overloaded = util_point >= _ONE
 
     # --- Deterministic identity -------------------------------------------
-    projection_id = _compute_projection_id(
-        forecast_id, available_capacity_minutes, efficiency_factor, rule_version
-    )
+    identity_payload = {
+        "forecast_id": forecast_id,
+        "outlet_id": outlet_id,
+        "service_window": service_window,
+        "window_start": window_start.astimezone(timezone.utc).isoformat(),
+        "window_end": window_end.astimezone(timezone.utc).isoformat(),
+        "sku_workloads": [[str(value) for value in row] for row in sku_workloads],
+        "available_capacity_minutes": str(available_capacity_minutes),
+        "base_prep_minutes": str(base_prep_minutes),
+        "efficiency_factor": str(efficiency_factor),
+        "risk_thresholds": [str(moderate_threshold), str(high_threshold), str(critical_threshold)],
+        "rule_version": rule_version,
+        "evidence_ids": list(evidence_ids),
+    }
+    encoded = json.dumps(identity_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    projection_id = f"cap_{sha256(encoded).hexdigest()[:16]}"
 
     return CapacityProjection(
         projection_id=projection_id,

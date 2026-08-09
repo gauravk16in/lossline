@@ -163,9 +163,18 @@ def compute_snapshot_id(
 
 
 def compute_dataset_fingerprint(rows: tuple[DatasetRow, ...]) -> str:
-    """Deterministic SHA-256 of an ordered dataset of rows."""
+    """Deterministic SHA-256 of ordered features, targets, and censoring state."""
     encoded = json.dumps(
-        [row.snapshot.fingerprint for row in rows],
+        [
+            {
+                "snapshot": row.snapshot.fingerprint,
+                "target": row.target_demand_quantity,
+                "observed": row.observed_demand_quantity,
+                "censored": row.censored,
+            }
+            for row in rows
+        ],
+        sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     return sha256(encoded).hexdigest()

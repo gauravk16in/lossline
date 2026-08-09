@@ -18,7 +18,7 @@ estimate, and a deterministic identity.
 
 ## Output
 
-- `ForecastResult` frozen dataclass (minimal contract for downstream).
+- Structural `ForecastLike` protocol plus a compatibility test stub for downstream.
 - `InventoryProjection` frozen dataclass following C01 contract.
 - `ShortageSeverity` StrEnum (NONE / LOW / MEDIUM / HIGH / CRITICAL).
 - `project_inventory()` pure function.
@@ -36,10 +36,10 @@ estimate, and a deterministic identity.
 
 ## Contracts
 
-`ForecastResult` is a frozen dataclass carrying forecast ID, grain, temporal
-coordinates, point/lower/upper demand, interval method, model version, feature
-snapshot ID, data sufficiency, and quality flags.  Person A's C05–C07 will
-produce objects conforming to this shape.
+`ForecastLike` structurally describes the fields required from forecasts.
+The real C05 `BaselineForecast` and C06 `GBTForecast` both satisfy it and are
+covered by integration tests. `ForecastResult` remains a compatibility test
+stub rather than a competing production serialization boundary.
 
 `InventoryProjection` is a frozen dataclass carrying supply inputs (opening,
 replenishment, usable supply, safety buffer, available for demand), ending
@@ -67,7 +67,9 @@ surplus_lower  = max(0, available_for_demand - demand_upper_int)
 stockout_risk = shortage_point > 0
 surplus_risk  = surplus_point > safety_buffer × surplus_risk_multiplier
 
-stockout_window_fraction = available_for_demand / demand_point  [0, 1)
+stockout_window_fraction:
+  → interpolate the supplied cumulative intrawindow demand curve (preferred)
+  → otherwise available_for_demand / demand_point as UNIFORM_FALLBACK_V1
   → None when no stockout projected
   → Decimal("0") when available_for_demand ≤ 0
 ```
@@ -99,15 +101,18 @@ All thresholds are module-level constants, never hardcoded in logic:
 
 - `ForecastResult` demand values are rounded to integers before arithmetic.
 - Ending inventory can be negative (means demand exceeded supply).
-- Stockout-window fraction assumes uniform demand rate during the window.
+- Stockout timing uses a validated cumulative demand curve when supplied. The
+  versioned uniform fallback is used only when no curve is available and is
+  recorded on the projection.
 - Surplus risk is triggered only when surplus_point exceeds the safety buffer
   by the surplus_risk_multiplier factor.
 - No backend persistence, API, or frontend changes in C08.
 
 ## Decisions
 
-- `ForecastResult` and `InventoryProjection` are both `@dataclass(frozen=True)`.
-- `ForecastResult` is a forward contract; Person A's C05–C07 will conform to it.
+- `InventoryProjection` and the compatibility `ForecastResult` stub are frozen
+  dataclasses; projection engines type against the structural `ForecastLike` protocol.
+- Real C05/C06 forecasts are accepted without mapping to a duplicate model.
 - `ShortageSeverity` is a `StrEnum`.
 - Stockout-window fraction is `None` when no stockout is projected.
 - Projection ID is a deterministic SHA-256 of the supply inputs and forecast ID.
@@ -132,7 +137,8 @@ All thresholds are module-level constants, never hardcoded in logic:
 - Zero demand: no shortage, all surplus, fraction None.
 - Deterministic projection ID: same inputs, different opening/replenishment.
 - Input validation: negative opening/replenishment, naive timestamps, demand ordering.
-- Stockout-window fraction helpers.
+- Uniform and cumulative-curve stockout timing helpers, validation and method metadata.
+- Real C05 baseline and C06 GBT forecast compatibility.
 - Metadata: rule_version, custom rule_version, evidence_ids, outlet/sku/window carried.
 - Golden scenario E (stockout) produces stockout_risk=True.
 - Golden scenario A (normal weekday) produces valid projections.
@@ -149,9 +155,9 @@ All thresholds are module-level constants, never hardcoded in logic:
 
 ## Definition of done
 
-C08 is complete when: 59/59 inventory projection tests pass, full regression
-suite passes (267 intelligence + 12 simulator → 279 minimum), projection ID
-is deterministic, ForecastResult contract is frozen, safety-buffer and
+C08 is complete when: all inventory projection tests pass without skips, full regression
+suite passes, projection ID
+is deterministic, the structural forecast contract is frozen, safety-buffer and
 replenishment formulas are verified, all 5 severity tiers have boundary tests,
-stockout-window fraction is tested, golden scenarios are covered, and
+stockout timing is tested, golden scenarios are covered, and
 verification records no unresolved failure.

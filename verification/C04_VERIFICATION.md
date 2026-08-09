@@ -41,7 +41,7 @@ Result: 12 passed.
 | Calendar/context features | 6 context features extracted from window input | PASS |
 | Future and late-record exclusion | `test_lag_excluded_when_prior_window_after_prediction` | PASS |
 | Censored-demand target handling | `test_stockout_flagged`, `test_dataset_row_censored_flag` | PASS |
-| Dataset fingerprint | `test_reproducible`, `test_different_data_different_fingerprint` | PASS |
+| Dataset fingerprint | Reproducibility plus feature/target/observation/censoring sensitivity tests | PASS |
 | FeatureSnapshot contract frozen | Strict frozen Pydantic model with `extra="forbid"` | PASS |
 | Snapshot fingerprint reproducible | `test_deterministic_fingerprint` | PASS |
 | Dataset fingerprint reproducible | `test_golden_scenarios_dataset` — A–G stable | PASS |
@@ -74,7 +74,7 @@ Result: 12 passed.
 
 Expected: a point-in-time feature pipeline producing typed, fingerprinted snapshots from C03 synthetic windows, with temporal safety and censored-demand handling.
 
-Actual: 16 registered features covering calendar, weather, promotion, inventory, capacity, demand history, and SKU statics. Pipeline enforces future/late-record exclusion via prior_window_end vs prediction_as_of comparison. Censored targets are flagged but preserved. Dataset fingerprints are deterministic across runs. All golden scenarios A–G produce valid snapshots.
+Actual: 16 registered features covering calendar, weather, promotion, inventory, capacity, demand history, and SKU statics. Pipeline enforces future/late-record exclusion via prior_window_end vs prediction_as_of comparison. Censored targets are flagged but preserved. Dataset fingerprints are deterministic across runs and bind features, targets, observations, and censoring state. All golden scenarios A–G produce valid snapshots.
 
 ## Known limitations
 

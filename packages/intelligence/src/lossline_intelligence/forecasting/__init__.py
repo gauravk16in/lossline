@@ -16,6 +16,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class ForecastLike(Protocol):
+    """Structural contract consumed by deterministic projection engines."""
+
+    forecast_id: str
+    outlet_id: str
+    sku_id: str
+    service_window: str
+    prediction_as_of: datetime
+    window_start: datetime
+    window_end: datetime
+    point_demand: Decimal
+    lower_demand: Decimal
+    upper_demand: Decimal
+    interval_method: str
+    feature_snapshot_id: str
+    data_sufficient: bool
 
 
 @dataclass(frozen=True)

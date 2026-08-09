@@ -9,18 +9,19 @@ Status: PASS
 Focused command:
 
 ```text
-python -m pytest packages/intelligence/tests/test_inventory_projection.py -v
+.venv/bin/pytest packages/intelligence/tests/test_inventory_projection.py -v
 ```
 
-Result: 59 passed.
+Result after C07 integration completion: 67 passed, 0 skipped.
 
 Full regression command:
 
 ```text
-python -m pytest packages/intelligence/tests/ simulator/tests/ -q
+.venv/bin/pytest packages/intelligence/tests/ -q -rs
+.venv/bin/pytest simulator/tests/ -q -rs
 ```
 
-Result: 338 passed (255 existing C01-C04 + 59 new C08 + 12 simulator + 12 other).
+Current post-C07 integration result: 407 intelligence tests and 12 simulator tests passed, with zero skips.
 
 ## Requirement matrix
 
@@ -34,7 +35,7 @@ Result: 338 passed (255 existing C01-C04 + 59 new C08 + 12 simulator + 12 other)
 | Shortage/surplus detection | `test_shortage_point_nonzero`, `test_surplus_risk_when_large_excess` | PASS |
 | All 5 severity tiers | `TestShortageSeverity` — NONE/LOW/MEDIUM/HIGH/CRITICAL | PASS |
 | Severity boundary tests | `test_boundary_low_medium`, `test_boundary_medium_high`, `test_boundary_high_critical` | PASS |
-| Stockout-window fraction | `test_stockout_fraction_calculation` — 36/50 = 0.7200 | PASS |
+| Stockout-window fraction | Uniform and cumulative interpolation tests | PASS |
 | Fraction None when no stockout | `test_no_stockout_window_fraction` | PASS |
 | Fraction 0 at zero supply | `test_stockout_fraction_at_zero_inventory` | PASS |
 | Deterministic projection ID | `test_same_inputs_same_id`, `test_projection_id_deterministic_across_runs` | PASS |
@@ -43,7 +44,9 @@ Result: 338 passed (255 existing C01-C04 + 59 new C08 + 12 simulator + 12 other)
 | Input validation | negative opening/replenishment, naive timestamps, demand ordering | PASS |
 | Golden scenario E stockout detected | `test_scenario_e_stockout_detected` | PASS |
 | Golden scenario A normal | `test_scenario_a_baseline_no_stockout` | PASS |
-| Full regression clean | 338 passed | PASS |
+| Real C05/C06 compatibility | BaselineForecast and GBTForecast integration tests | PASS |
+| Timing method provenance | CUMULATIVE_CURVE_V1 / UNIFORM_FALLBACK_V1 tests | PASS |
+| Full regression clean | 407 intelligence + 12 simulator, zero skips | PASS |
 
 ## Supply arithmetic verification (manual)
 
@@ -72,22 +75,23 @@ Test `test_stockout_fraction_calculation` confirms 0.7200.
 
 | Gate | Status |
 |---|---|
-| C08 inventory projection tests passing | 59/59 PASS |
+| C08 inventory projection tests passing | 67/67 PASS, no skips |
 | C08 verification status | PASS |
 | InventoryProjection contract frozen | Frozen dataclass, all C01 fields present |
-| ForecastResult contract frozen | Frozen dataclass, C05-C07 will conform |
+| Forecast boundary frozen | Structural `ForecastLike`; direct C05/C06 compatibility |
 | Safety-buffer formula verified | `test_buffer_is_10pct_of_opening`, `test_buffer_minimum_enforced` |
 | Replenishment formula verified | `test_replenishment_adds_to_supply`, `test_replenishment_prevents_shortage` |
 | All severity tiers covered | 9 severity tests including all boundaries |
 | Stockout-window fraction verified | 4 dedicated tests |
 | Deterministic projection ID | 4 identity tests |
 | Golden scenario coverage | Scenario E (stockout) and A (normal) |
-| Full regression clean | 338 passed, 0 failed |
+| Full regression clean | 407 intelligence + 12 simulator passed, 0 failed/skipped |
 
 ## Known limitations
 
-- `ForecastResult` is a forward contract; Person A's C05–C07 may add fields.
+- `ForecastLike` is the engine boundary; `ForecastResult` remains a test compatibility stub. Real C05/C06 forecasts pass integration tests.
 - Rolling replenishment projections (mid-window restocking) not modelled — C08 uses a single pre-window replenishment.
+- Uniform stockout timing is an explicitly recorded fallback when no cumulative demand curve exists.
 - No backend persistence, API, or frontend changes (C19 concern).
 
 ## What was NOT changed

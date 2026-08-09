@@ -3,6 +3,7 @@
 from lossline_intelligence.inventory.projection import (
     InventoryProjection,
     ShortageSeverity,
+    StockoutTimingMethod,
 )
 from lossline_intelligence.inventory.engine import (
     RULE_VERSION,
@@ -13,5 +14,6 @@ __all__ = [
     "RULE_VERSION",
     "InventoryProjection",
     "ShortageSeverity",
+    "StockoutTimingMethod",
     "project_inventory",
 ]

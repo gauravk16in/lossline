@@ -10,13 +10,21 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import os
+import sys
 
 import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+SIMULATOR_ROOT = os.path.join(ROOT, "simulator")
+if SIMULATOR_ROOT not in sys.path:
+    sys.path.insert(0, SIMULATOR_ROOT)
 
 from lossline_intelligence.forecasting import ForecastResult
 from lossline_intelligence.inventory import (
     InventoryProjection,
     ShortageSeverity,
+    StockoutTimingMethod,
     project_inventory,
 )
 from lossline_intelligence.inventory.engine import (
@@ -25,6 +33,7 @@ from lossline_intelligence.inventory.engine import (
     RULE_VERSION,
     _compute_severity,
     _stockout_window_fraction,
+    _stockout_fraction_from_curve,
 )
 
 # ---------------------------------------------------------------------------
@@ -463,6 +472,108 @@ class TestStockoutWindowFraction:
     def test_fraction_is_decimal(self) -> None:
         f = _stockout_window_fraction(30, Decimal("50"))
         assert isinstance(f, Decimal)
+
+    def test_cumulative_curve_interpolates_non_uniform_stockout(self) -> None:
+        fraction = _stockout_fraction_from_curve(
+            36,
+            Decimal("50"),
+            (Decimal("10"), Decimal("30"), Decimal("50")),
+        )
+        assert fraction == Decimal("0.7667")
+
+    def test_projection_records_curve_or_uniform_method(self) -> None:
+        uniform = _proj(
+            point_demand=Decimal("50"),
+            lower_demand=Decimal("45"),
+            upper_demand=Decimal("60"),
+            opening=40,
+        )
+        curved = project_inventory(
+            _forecast(
+                point_demand=Decimal("50"),
+                lower_demand=Decimal("45"),
+                upper_demand=Decimal("60"),
+            ),
+            opening_inventory=40,
+            cumulative_demand_curve=(Decimal("10"), Decimal("30"), Decimal("50")),
+        )
+        assert uniform.stockout_timing_method is StockoutTimingMethod.UNIFORM_FALLBACK
+        assert curved.stockout_timing_method is StockoutTimingMethod.CUMULATIVE_CURVE
+        assert curved.stockout_window_fraction == Decimal("0.7667")
+        assert curved.projection_id != uniform.projection_id
+
+    @pytest.mark.parametrize(
+        "curve",
+        [
+            (),
+            (Decimal("10"), Decimal("9"), Decimal("50")),
+            (Decimal("10"), Decimal("30"), Decimal("49")),
+            (Decimal("10"), Decimal("NaN"), Decimal("50")),
+        ],
+    )
+    def test_invalid_cumulative_curve_rejected(self, curve) -> None:
+        with pytest.raises(ValueError, match="cumulative"):
+            project_inventory(
+                _forecast(
+                    point_demand=Decimal("50"),
+                    lower_demand=Decimal("45"),
+                    upper_demand=Decimal("60"),
+                ),
+                opening_inventory=40,
+                cumulative_demand_curve=curve,
+            )
+
+
+class TestRealForecastCompatibility:
+    def test_accepts_c05_baseline_forecast(self) -> None:
+        from lossline_intelligence.forecasts import BaselineForecast, BaselineScope
+
+        forecast = BaselineForecast(
+            forecast_id="fcst_baseline_real",
+            forecast_version="comparable_median.v1",
+            interval_method="empirical_comparable_demand_80.v1",
+            prediction_as_of=_T0,
+            outlet_id="meghana_indiranagar",
+            sku_id="CHICKEN_BIRYANI",
+            service_window="DINNER",
+            window_start=_T0,
+            window_end=_T1,
+            feature_snapshot_id="snap_real",
+            point_demand=Decimal("50"),
+            lower_demand=Decimal("40"),
+            upper_demand=Decimal("60"),
+            scope=BaselineScope.OUTLET_SKU_WEEKDAY_WINDOW,
+            sample_count=4,
+            source_snapshot_ids=("s1", "s2", "s3", "s4"),
+            data_sufficient=True,
+        )
+        result = project_inventory(forecast, opening_inventory=40)
+        assert result.forecast_id == forecast.forecast_id
+        assert result.stockout_risk is True
+
+    def test_accepts_c06_gbt_forecast(self) -> None:
+        from lossline_intelligence.forecasts import GBTForecast
+
+        forecast = GBTForecast(
+            forecast_id="fcst_gbt_real",
+            model_version="lightgbm_gbt.v1",
+            artifact_id="artifact_real",
+            interval_method="empirical_residual_80.v1",
+            prediction_as_of=_T0,
+            outlet_id="meghana_indiranagar",
+            sku_id="CHICKEN_BIRYANI",
+            service_window="DINNER",
+            window_start=_T0,
+            window_end=_T1,
+            feature_snapshot_id="snap_real",
+            point_demand=Decimal("50"),
+            lower_demand=Decimal("40"),
+            upper_demand=Decimal("60"),
+            data_sufficient=True,
+        )
+        result = project_inventory(forecast, opening_inventory=40)
+        assert result.forecast_id == forecast.forecast_id
+        assert result.stockout_risk is True
 
 
 # ---------------------------------------------------------------------------

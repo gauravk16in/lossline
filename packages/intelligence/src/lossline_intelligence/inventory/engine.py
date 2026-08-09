@@ -16,10 +16,11 @@ from decimal import Decimal, ROUND_HALF_UP
 from hashlib import sha256
 import json
 
-from lossline_intelligence.forecasting import ForecastResult
+from lossline_intelligence.forecasting import ForecastLike
 from lossline_intelligence.inventory.projection import (
     InventoryProjection,
     ShortageSeverity,
+    StockoutTimingMethod,
 )
 
 # ---------------------------------------------------------------------------
@@ -100,12 +101,51 @@ def _stockout_window_fraction(
     return fraction.quantize(_DP, rounding=ROUND_HALF_UP)
 
 
+def _stockout_fraction_from_curve(
+    available_for_demand: int,
+    demand_point: Decimal,
+    cumulative_demand_curve: tuple[Decimal, ...],
+) -> Decimal | None:
+    """Interpolate stockout fraction from cumulative demand checkpoints."""
+    if not cumulative_demand_curve:
+        raise ValueError("cumulative_demand_curve cannot be empty")
+    previous = Decimal("0")
+    for value in cumulative_demand_curve:
+        if not value.is_finite() or value < previous:
+            raise ValueError("cumulative demand curve must be finite and non-decreasing")
+        previous = value
+    if abs(cumulative_demand_curve[-1] - demand_point) > _DP:
+        raise ValueError("cumulative demand curve must end at point_demand")
+    if available_for_demand <= 0:
+        return _ZERO
+    if Decimal(available_for_demand) >= demand_point:
+        return None
+
+    checkpoints = Decimal(len(cumulative_demand_curve))
+    prior_quantity = Decimal("0")
+    prior_fraction = Decimal("0")
+    for index, quantity in enumerate(cumulative_demand_curve, start=1):
+        current_fraction = Decimal(index) / checkpoints
+        if quantity >= Decimal(available_for_demand):
+            increment = quantity - prior_quantity
+            if increment == 0:
+                return prior_fraction.quantize(_DP, rounding=ROUND_HALF_UP)
+            within = (Decimal(available_for_demand) - prior_quantity) / increment
+            result = prior_fraction + within * (current_fraction - prior_fraction)
+            return result.quantize(_DP, rounding=ROUND_HALF_UP)
+        prior_quantity = quantity
+        prior_fraction = current_fraction
+    return None
+
+
 def _compute_projection_id(
     forecast_id: str,
     opening_inventory: int,
     replenishment_quantity: int,
     safety_buffer: int,
     rule_version: str,
+    stockout_timing_method: StockoutTimingMethod,
+    cumulative_demand_curve: tuple[Decimal, ...] | None,
 ) -> str:
     """Deterministic SHA-256 projection identifier."""
     payload = {
@@ -114,6 +154,12 @@ def _compute_projection_id(
         "rq": replenishment_quantity,
         "rv": rule_version,
         "sb": safety_buffer,
+        "stm": stockout_timing_method.value,
+        "curve": (
+            None
+            if cumulative_demand_curve is None
+            else [str(value) for value in cumulative_demand_curve]
+        ),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     tag = sha256(encoded).hexdigest()[:16]
@@ -126,7 +172,7 @@ def _compute_projection_id(
 
 
 def project_inventory(
-    forecast: ForecastResult,
+    forecast: ForecastLike,
     *,
     opening_inventory: int,
     replenishment_quantity: int = 0,
@@ -136,6 +182,7 @@ def project_inventory(
     unit: str = "portions",
     rule_version: str = RULE_VERSION,
     evidence_ids: tuple[str, ...] = (),
+    cumulative_demand_curve: tuple[Decimal, ...] | None = None,
 ) -> InventoryProjection:
     """Project inventory outcomes from a demand forecast.
 
@@ -199,9 +246,22 @@ def project_inventory(
 
     # --- Stockout-window fraction (only when stockout is projected) --------
     fraction: Decimal | None
-    if stockout_risk:
+    timing_method = (
+        StockoutTimingMethod.CUMULATIVE_CURVE
+        if cumulative_demand_curve is not None
+        else StockoutTimingMethod.UNIFORM_FALLBACK
+    )
+    if stockout_risk and cumulative_demand_curve is not None:
+        fraction = _stockout_fraction_from_curve(
+            available_for_demand, forecast.point_demand, cumulative_demand_curve
+        )
+    elif stockout_risk:
         fraction = _stockout_window_fraction(available_for_demand, forecast.point_demand)
     else:
+        if cumulative_demand_curve is not None:
+            _stockout_fraction_from_curve(
+                available_for_demand, forecast.point_demand, cumulative_demand_curve
+            )
         fraction = None
 
     # --- Deterministic identity -------------------------------------------
@@ -211,6 +271,8 @@ def project_inventory(
         replenishment_quantity,
         safety_buffer,
         rule_version,
+        timing_method,
+        cumulative_demand_curve,
     )
 
     return InventoryProjection(
@@ -237,6 +299,7 @@ def project_inventory(
         shortage_severity=shortage_severity,
         surplus_risk=surplus_risk,
         stockout_window_fraction=fraction,
+        stockout_timing_method=timing_method,
         unit=unit,
         rule_version=rule_version,
         evidence_ids=evidence_ids,

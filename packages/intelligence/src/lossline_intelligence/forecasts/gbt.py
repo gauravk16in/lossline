@@ -472,13 +472,14 @@ def forecast_gbt(
     # Point demand: clamped to ≥ 0
     point = _clamp_non_negative(Decimal(str(raw_pred)))
 
-    # Empirical residual bounds: raw_pred + residual percentile offset
-    # residual = pred - actual  → lower bound uses p10 (typically negative)
+    # Empirical actual-demand bounds from residual = prediction - actual:
+    # actual = prediction - residual.  The upper residual quantile therefore
+    # produces the lower demand bound and the lower quantile the upper bound.
     lower = _clamp_non_negative(
-        (Decimal(str(raw_pred)) + artifact.residual_p10).quantize(_DP, rounding=ROUND_HALF_UP)
+        (Decimal(str(raw_pred)) - artifact.residual_p90).quantize(_DP, rounding=ROUND_HALF_UP)
     )
     upper = _clamp_non_negative(
-        (Decimal(str(raw_pred)) + artifact.residual_p90).quantize(_DP, rounding=ROUND_HALF_UP)
+        (Decimal(str(raw_pred)) - artifact.residual_p10).quantize(_DP, rounding=ROUND_HALF_UP)
     )
 
     # Ensure containment invariant: lower ≤ point ≤ upper

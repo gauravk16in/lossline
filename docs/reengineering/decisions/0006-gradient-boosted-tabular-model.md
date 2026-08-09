@@ -57,7 +57,7 @@ C05 established the comparable-history median as an honest baseline. C06 must in
 - `params` and `params_fingerprint`: reproduce training exactly.
 - `feature_names`: registry-aligned, sorted, numeric/boolean only.
 - `evaluation_metrics`: MAE, RMSE, WMAPE, bias on held-out test fold.
-- `residual_p10`, `residual_p90`: additive offsets for inference-time bounds.
+- `residual_p10`, `residual_p90`: signed `prediction - actual` residual quantiles; inference converts them back to demand bounds by subtraction.
 
 ## Acceptance gate
 
@@ -65,7 +65,7 @@ C06 requires: `artifact.evaluation_metrics["mae"]` is a finite, non-negative Dec
 
 ## Consequences
 
-- `lightgbm==4.6.0` and `numpy==2.2.3` are pinned production dependencies.
+- `lightgbm==4.6.0`, `numpy==2.2.3`, and its direct runtime dependency `scipy==1.18.0` are pinned production dependencies. macOS development also requires the system OpenMP runtime (`brew install libomp`).
 - `MLForecastArtifact` is an internal `@dataclass(frozen=True)`, not a Pydantic model — no validation overhead for an in-process object.
 - `GBTForecast` is a Pydantic `BaseModel` (serialization boundary, C01 contract).
 - The baseline remains available as a fallback when no accepted ML artifact exists (C19).

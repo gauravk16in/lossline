@@ -10,8 +10,15 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+import os
+import sys
 
 import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+SIMULATOR_ROOT = os.path.join(ROOT, "simulator")
+if SIMULATOR_ROOT not in sys.path:
+    sys.path.insert(0, SIMULATOR_ROOT)
 
 from lossline_intelligence.capacity import (
     CapacityProjection,
@@ -214,6 +221,26 @@ class TestRiskTier:
     def test_boundary_high_critical(self) -> None:
         assert _compute_risk_tier(Decimal("1.00")) is CapacityRiskTier.CRITICAL
 
+    def test_custom_thresholds(self) -> None:
+        p = project_capacity(
+            forecast_id="f1", outlet_id="out", service_window="DINNER",
+            window_start=_T0, window_end=_T1,
+            sku_workloads=((Decimal("80"), Decimal("70"), Decimal("90"), Decimal("1")),),
+            available_capacity_minutes=Decimal("100"), efficiency_factor=Decimal("1"),
+            moderate_threshold=Decimal("0.50"), high_threshold=Decimal("0.70"),
+            critical_threshold=Decimal("0.90"),
+        )
+        assert p.risk_tier is CapacityRiskTier.HIGH
+
+    def test_invalid_threshold_order_rejected(self) -> None:
+        with pytest.raises(ValueError, match="moderate < high < critical"):
+            project_capacity(
+                forecast_id="f1", outlet_id="out", service_window="DINNER",
+                window_start=_T0, window_end=_T1, sku_workloads=_ALL_SKUS,
+                available_capacity_minutes=Decimal("900"),
+                moderate_threshold=Decimal("0.9"), high_threshold=Decimal("0.8"),
+            )
+
 
 # ---------------------------------------------------------------------------
 # Overload
@@ -347,6 +374,47 @@ class TestInputValidation:
     def test_efficiency_above_one_rejected(self) -> None:
         with pytest.raises(ValueError, match="efficiency_factor"):
             _proj(efficiency_factor=Decimal("1.1"))
+
+    @pytest.mark.parametrize("value", [Decimal("NaN"), Decimal("Infinity")])
+    def test_non_finite_capacity_rejected(self, value: Decimal) -> None:
+        with pytest.raises(ValueError, match="finite Decimal"):
+            _proj(available_capacity_minutes=value)
+
+    def test_inverted_demand_bounds_rejected(self) -> None:
+        with pytest.raises(ValueError, match="lower <= point <= upper"):
+            _proj(sku_workloads=((Decimal("5"), Decimal("6"), Decimal("7"), Decimal("2")),))
+
+    def test_negative_demand_rejected(self) -> None:
+        with pytest.raises(ValueError, match="lower <= point <= upper"):
+            _proj(sku_workloads=((Decimal("1"), Decimal("-1"), Decimal("2"), Decimal("2")),))
+
+    def test_non_positive_workload_rejected(self) -> None:
+        with pytest.raises(ValueError, match="workload_minutes_per_unit"):
+            _proj(sku_workloads=((Decimal("1"), Decimal("1"), Decimal("2"), Decimal("0")),))
+
+    def test_naive_window_rejected(self) -> None:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            project_capacity(
+                forecast_id="f1", outlet_id="out", service_window="DINNER",
+                window_start=datetime(2026, 1, 7, 13), window_end=_T1,
+                sku_workloads=_ALL_SKUS, available_capacity_minutes=Decimal("900"),
+            )
+
+    def test_inverted_window_rejected(self) -> None:
+        with pytest.raises(ValueError, match="after window_start"):
+            project_capacity(
+                forecast_id="f1", outlet_id="out", service_window="DINNER",
+                window_start=_T1, window_end=_T0,
+                sku_workloads=_ALL_SKUS, available_capacity_minutes=Decimal("900"),
+            )
+
+    def test_duplicate_evidence_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unique"):
+            project_capacity(
+                forecast_id="f1", outlet_id="out", service_window="DINNER",
+                window_start=_T0, window_end=_T1, sku_workloads=_ALL_SKUS,
+                available_capacity_minutes=Decimal("900"), evidence_ids=("e1", "e1"),
+            )
 
 
 # ---------------------------------------------------------------------------

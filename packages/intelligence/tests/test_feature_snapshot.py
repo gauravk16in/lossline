@@ -578,6 +578,36 @@ class TestDatasetFingerprint:
         fp_b = compute_dataset_fingerprint(rows_b)
         assert fp_a != fp_b
 
+    def test_target_and_censoring_state_affect_fingerprint(self) -> None:
+        registry = build_demo_registry()
+        rows = build_dataset([_window()], registry=registry, prediction_as_of=_as_of())
+        original = rows[0]
+        variants = (
+            DatasetRow(
+                original.snapshot,
+                original.target_demand_quantity + 1,
+                original.observed_demand_quantity,
+                original.censored,
+            ),
+            DatasetRow(
+                original.snapshot,
+                original.target_demand_quantity,
+                original.observed_demand_quantity + 1,
+                original.censored,
+            ),
+            DatasetRow(
+                original.snapshot,
+                original.target_demand_quantity,
+                original.observed_demand_quantity,
+                not original.censored,
+            ),
+        )
+
+        fingerprint = compute_dataset_fingerprint(rows)
+        for variant in variants:
+            changed = (variant, *rows[1:])
+            assert compute_dataset_fingerprint(changed) != fingerprint
+
     def test_golden_scenarios_dataset(self) -> None:
         """Full A--G dataset produces a stable fingerprint."""
         _, _, generate_golden_scenarios, _ = _from_causal_world()

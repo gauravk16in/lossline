@@ -23,6 +23,11 @@ class ShortageSeverity(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class StockoutTimingMethod(StrEnum):
+    CUMULATIVE_CURVE = "CUMULATIVE_CURVE_V1"
+    UNIFORM_FALLBACK = "UNIFORM_FALLBACK_V1"
+
+
 @dataclass(frozen=True)
 class InventoryProjection:
     """Immutable inventory projection for one outlet × SKU × service window.
@@ -69,6 +74,7 @@ class InventoryProjection:
     # Stockout-window estimate (fraction of window demand serviceable)
     # None when no stockout is projected.
     stockout_window_fraction: Decimal | None
+    stockout_timing_method: StockoutTimingMethod
 
     # Metadata
     unit: str

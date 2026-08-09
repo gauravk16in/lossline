@@ -59,7 +59,7 @@ Implement the first ML demand forecast model at outlet × SKU × named service-w
 2. Return `GBTAbstention(INVALID_TARGET_SNAPSHOT)` when `target.window_start < prediction_as_of`.
 3. Extract feature vector in `artifact.feature_names` order.
 4. Predict with booster; clamp raw prediction to ≥ 0.
-5. Apply `residual_p10`/`residual_p90` as additive offsets to raw prediction.
+5. Convert signed residuals (`prediction - actual`) back to demand bounds: lower is `prediction - residual_p90`; upper is `prediction - residual_p10`.
 6. Clamp bounds to ≥ 0; enforce containment: `lower ≤ point ≤ upper`.
 7. Return `GBTForecast`.
 
