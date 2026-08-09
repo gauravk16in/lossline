@@ -5,7 +5,6 @@
   "outputDirectory": "apps/frontend/dist",
   "functions": {
     "api/index.py": {
-      "runtime": "python3.12",
       "maxDuration": 300,
       "includeFiles": "packages/intelligence/src/**"
     }

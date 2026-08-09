@@ -162,7 +162,7 @@ async def ingest_event(
     )
     if existing_event is None: db.add(new_event)
     new_event.processing_status = "PROCESSING"
-    new_event.processing_attempt_count += 1
+    new_event.processing_attempt_count = (new_event.processing_attempt_count or 0) + 1
     new_event.processing_last_error = None
     await db.flush()
 
@@ -271,6 +271,7 @@ class ScenarioRunPayload(BaseModel):
 class PredictiveManagerReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["APPROVE", "REJECT"]
+    manager_id: str | None = None  # ignored; identity comes from the authenticated subject
     idempotency_key: str
     manager_note: str | None = None
 
