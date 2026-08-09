@@ -9,10 +9,11 @@ SCENARIO_ID = "meghana_lunch_rush_v1"
 ITEMS = {
     "MEGHANA_SPECIAL_CHICKEN_BIRYANI": {"price": 320.0, "initial_qty": 60.0},
     "MEGHANA_MUTTON_BIRYANI": {"price": 420.0, "initial_qty": 30.0},
-    "MEGHANA_ALOO_BIRYANI": {"price": 240.0, "initial_qty": 20.0}
+    "MEGHANA_ALOO_BIRYANI": {"price": 240.0, "initial_qty": 20.0},
 }
 
 CHANNELS = ["delivery", "dine_in", "takeaway"]
+
 
 def create_event(
     event_id: str,
@@ -22,7 +23,7 @@ def create_event(
     entity_type: str,
     entity_id: str,
     data: Dict[str, Any],
-    sequence: int
+    sequence: int,
 ) -> Dict[str, Any]:
     """
     Creates a canonical event dictionary matching the validation schema.
@@ -39,23 +40,23 @@ def create_event(
         "metadata": {
             "synthetic": True,
             "scenario_id": SCENARIO_ID,
-            "sequence": sequence
-        }
+            "sequence": sequence,
+        },
     }
 
+
 def generate_scenario_events(
-    start_time: datetime,
-    seed: int = 42
+    start_time: datetime, seed: int = 42
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """
     Generates historical baseline, pre-approval live, and post-approval recovery events.
     """
     random.seed(seed)
-    
+
     baseline_events: List[Dict[str, Any]] = []
     pre_approval_events: List[Dict[str, Any]] = []
     post_approval_events: List[Dict[str, Any]] = []
-    
+
     seq_counter = 1
 
     # Normalize start time to UTC
@@ -70,29 +71,6 @@ def generate_scenario_events(
     # Generates standard daily lunches (12:00 PM to 2:30 PM) for the past 7 days.
     for day in range(7, 0, -1):
         day_start = start_time - timedelta(days=day)
-        # Seed daily inventory at 9:00 AM
-        inv_time = day_start.replace(hour=9, minute=0, second=0, microsecond=0)
-        for sku, config in ITEMS.items():
-            evt_id = f"evt_base_inv_{day}_{sku.lower()}"
-            baseline_events.append(
-                create_event(
-                    event_id=evt_id,
-                    source="inventory",
-                    event_type="inventory.updated",
-                    occurred_at=inv_time,
-                    entity_type="inventory",
-                    entity_id=sku,
-                    data={
-                        "sku": sku,
-                        "previous_qty": config["initial_qty"],
-                        "new_qty": config["initial_qty"],
-                        "unit": "kg"
-                    },
-                    sequence=seq_counter
-                )
-            )
-            seq_counter += 1
-
         # Generate normal orders (12:00 PM to 2:00 PM)
         # Average 25 orders per day, normal wait times, zero/low cancellations
         lunch_time = day_start.replace(hour=12, minute=0, second=0, microsecond=0)
@@ -102,7 +80,7 @@ def generate_scenario_events(
             sku = random.choice(list(ITEMS.keys()))
             price = ITEMS[sku]["price"]
             channel = random.choice(CHANNELS)
-            
+
             # Order created
             baseline_events.append(
                 create_event(
@@ -113,31 +91,25 @@ def generate_scenario_events(
                     entity_type="order",
                     entity_id=ord_id,
                     data={"channel": channel, "amount": price, "currency": "INR"},
-                    sequence=seq_counter
+                    sequence=seq_counter,
                 )
             )
             seq_counter += 1
-            
+
             # Order completed (with normal wait times, e.g. 15-25 minutes)
             wait_sec = random.uniform(900, 1500)
             complete_time = order_time + timedelta(seconds=int(wait_sec))
-            
-            # Inventory usage update
+
             baseline_events.append(
                 create_event(
-                    event_id=f"evt_base_inv_up_{day}_{order_idx}",
-                    source="inventory",
-                    event_type="inventory.updated",
+                    event_id=f"evt_base_prep_{day}_{order_idx}",
+                    source="kds",
+                    event_type="preparation.completed",
                     occurred_at=complete_time,
-                    entity_type="inventory",
-                    entity_id=sku,
-                    data={
-                        "sku": sku,
-                        "previous_qty": 20.0,  # Arbitrary normal level
-                        "new_qty": 19.5,
-                        "unit": "kg"
-                    },
-                    sequence=seq_counter
+                    entity_type="order",
+                    entity_id=ord_id,
+                    data={"order_id": ord_id, "duration_seconds": wait_sec},
+                    sequence=seq_counter,
                 )
             )
             seq_counter += 1
@@ -150,11 +122,12 @@ def generate_scenario_events(
                         event_id=f"evt_base_del_{day}_{order_idx}",
                         source="delivery",
                         event_type="delivery.handoff_completed",
-                        occurred_at=complete_time + timedelta(seconds=int(handoff_wait)),
+                        occurred_at=complete_time
+                        + timedelta(seconds=int(handoff_wait)),
                         entity_type="order",
                         entity_id=ord_id,
                         data={"order_id": ord_id, "wait_seconds": handoff_wait},
-                        sequence=seq_counter
+                        sequence=seq_counter,
                     )
                 )
                 seq_counter += 1
@@ -163,7 +136,7 @@ def generate_scenario_events(
     # PART 2: LIVE PRE-APPROVAL EVENTS (Healthy -> Surge -> Degradation)
     # =========================================================================
     live_start = start_time.replace(hour=12, minute=0, second=0, microsecond=0)
-    
+
     # --- PHASE A: Healthy Phase (Minute 0 to 15) ---
     # 5 normal orders completed successfully
     for idx in range(5):
@@ -171,7 +144,7 @@ def generate_scenario_events(
         ord_id = f"ord_live_healthy_{idx}"
         sku = "MEGHANA_SPECIAL_CHICKEN_BIRYANI"
         price = ITEMS[sku]["price"]
-        
+
         pre_approval_events.append(
             create_event(
                 event_id=f"evt_live_oc_{idx}",
@@ -181,7 +154,7 @@ def generate_scenario_events(
                 entity_type="order",
                 entity_id=ord_id,
                 data={"channel": "delivery", "amount": price, "currency": "INR"},
-                sequence=seq_counter
+                sequence=seq_counter,
             )
         )
         seq_counter += 1
@@ -197,7 +170,7 @@ def generate_scenario_events(
                 entity_type="order",
                 entity_id=ord_id,
                 data={"order_id": ord_id, "wait_seconds": 180.0},
-                sequence=seq_counter
+                sequence=seq_counter,
             )
         )
         seq_counter += 1
@@ -209,7 +182,7 @@ def generate_scenario_events(
         ord_id = f"ord_live_surge_{idx}"
         sku = "MEGHANA_SPECIAL_CHICKEN_BIRYANI"
         price = ITEMS[sku]["price"]
-        
+
         pre_approval_events.append(
             create_event(
                 event_id=f"evt_live_oc_surge_{idx}",
@@ -219,7 +192,7 @@ def generate_scenario_events(
                 entity_type="order",
                 entity_id=ord_id,
                 data={"channel": "delivery", "amount": price, "currency": "INR"},
-                sequence=seq_counter
+                sequence=seq_counter,
             )
         )
         seq_counter += 1
@@ -238,39 +211,40 @@ def generate_scenario_events(
                 occurred_at=complete_time,
                 entity_type="order",
                 entity_id=ord_id,
-                data={"order_id": ord_id, "wait_seconds": 950.0},  # Wait time > 15 minutes!
-                sequence=seq_counter
+                data={
+                    "order_id": ord_id,
+                    "wait_seconds": 950.0,
+                },  # Wait time > 15 minutes!
+                sequence=seq_counter,
             )
         )
         seq_counter += 1
 
-    # 2. MEGHANA_SPECIAL_CHICKEN_BIRYANI inventory runs out (quantity drops to 0)
-    pre_approval_events.append(
-        create_event(
-            event_id="evt_live_inv_stockout",
-            source="inventory",
-            event_type="inventory.updated",
-            occurred_at=degrade_start + timedelta(minutes=5),
-            entity_type="inventory",
-            entity_id="MEGHANA_SPECIAL_CHICKEN_BIRYANI",
-            data={
-                "sku": "MEGHANA_SPECIAL_CHICKEN_BIRYANI",
-                "previous_qty": 3.5,
-                "new_qty": 0.0,
-                "unit": "kg"
-            },
-            sequence=seq_counter
+    # Preparation time is required evidence for the overload rule.
+    for idx in range(6):
+        prep_time = degrade_start + timedelta(minutes=idx * 2)
+        ord_id = f"ord_live_surge_{idx}"
+        pre_approval_events.append(
+            create_event(
+                event_id=f"evt_live_prep_deg_{idx}",
+                source="kds",
+                event_type="preparation.completed",
+                occurred_at=prep_time,
+                entity_type="order",
+                entity_id=ord_id,
+                data={"order_id": ord_id, "duration_seconds": 2700.0},
+                sequence=seq_counter,
+            )
         )
-    )
-    seq_counter += 1
+        seq_counter += 1
 
-    # 3. Order cancellations surge (5 orders cancelled due to delay and stockout)
+    # Order cancellations surge due to preparation delays.
     for idx in range(5):
         cancel_time = degrade_start + timedelta(minutes=7) + timedelta(minutes=idx * 2)
         ord_id = f"ord_live_surge_{idx + 5}"
         price = ITEMS["MEGHANA_SPECIAL_CHICKEN_BIRYANI"]["price"]
-        reason = "PREPARATION_DELAY" if idx < 3 else "ITEM_OUT_OF_STOCK"
-        
+        reason = "PREPARATION_DELAY"
+
         pre_approval_events.append(
             create_event(
                 event_id=f"evt_live_oc_cancel_{idx}",
@@ -283,9 +257,9 @@ def generate_scenario_events(
                     "channel": "delivery",
                     "amount": price,
                     "currency": "INR",
-                    "reason_code": reason
+                    "reason_code": reason,
                 },
-                sequence=seq_counter
+                sequence=seq_counter,
             )
         )
         seq_counter += 1
@@ -302,13 +276,13 @@ def generate_scenario_events(
             data={
                 "rating": 1,
                 "text": "My biryani delivery has been delayed for over 45 minutes! Horrible lunch service.",
-                "language": "en"
+                "language": "en",
             },
-            sequence=seq_counter
+            sequence=seq_counter,
         )
     )
     seq_counter += 1
-    
+
     pre_approval_events.append(
         create_event(
             event_id="evt_live_review_2",
@@ -320,9 +294,9 @@ def generate_scenario_events(
             data={
                 "rating": 2,
                 "text": "They cancelled my order because the Chicken Biryani was out of stock. Very disappointed.",
-                "language": "en"
+                "language": "en",
             },
-            sequence=seq_counter
+            sequence=seq_counter,
         )
     )
     seq_counter += 1
@@ -332,12 +306,39 @@ def generate_scenario_events(
     # =========================================================================
     # Generates events representing recovery (order volume decreases, wait times normalize)
     recovery_start = degrade_start + timedelta(minutes=20)
-    
+
     # Simulate remaining queue completions with normal wait times
     for idx in range(10):
         comp_time = recovery_start + timedelta(minutes=idx * 2)
         ord_id = f"ord_live_surge_{idx + 10}"
-        
+
+        post_approval_events.append(
+            create_event(
+                event_id=f"evt_rec_order_{idx}",
+                source="pos",
+                event_type="order.created",
+                occurred_at=comp_time - timedelta(minutes=12),
+                entity_type="order",
+                entity_id=ord_id,
+                data={"channel": "delivery", "amount": 320.0, "currency": "INR"},
+                sequence=seq_counter,
+            )
+        )
+        seq_counter += 1
+        post_approval_events.append(
+            create_event(
+                event_id=f"evt_rec_prep_{idx}",
+                source="kds",
+                event_type="preparation.completed",
+                occurred_at=comp_time - timedelta(minutes=2),
+                entity_type="order",
+                entity_id=ord_id,
+                data={"order_id": ord_id, "duration_seconds": 600.0},
+                sequence=seq_counter,
+            )
+        )
+        seq_counter += 1
+
         # Complete remaining orders successfully
         post_approval_events.append(
             create_event(
@@ -347,8 +348,11 @@ def generate_scenario_events(
                 occurred_at=comp_time,
                 entity_type="order",
                 entity_id=ord_id,
-                data={"order_id": ord_id, "wait_seconds": 150.0},  # Handoff delay normalized
-                sequence=seq_counter
+                data={
+                    "order_id": ord_id,
+                    "wait_seconds": 150.0,
+                },  # Handoff delay normalized
+                sequence=seq_counter,
             )
         )
         seq_counter += 1
@@ -365,11 +369,11 @@ def generate_scenario_events(
             data={
                 "rating": 5,
                 "text": "Order was fulfilled quickly, issues seem resolved now.",
-                "language": "en"
+                "language": "en",
             },
-            sequence=seq_counter
+            sequence=seq_counter,
         )
     )
     seq_counter += 1
-    
+
     return baseline_events, pre_approval_events, post_approval_events

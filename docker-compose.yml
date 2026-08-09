@@ -1,23 +1,62 @@
-version: '3.8'
-
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: lossline-redis
-    ports:
-      - "6379:6379"
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: lossline
+      POSTGRES_USER: lossline
+      POSTGRES_PASSWORD: lossline_demo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lossline -d lossline"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     volumes:
-      - redis_data:/data
-    restart: always
+      - lossline-postgres:/var/lib/postgresql/data
 
-  redisinsight:
-    image: redis/redisinsight:latest
-    container_name: lossline-redisinsight
-    ports:
-      - "8001:5540"
+  redis:
+    image: redis:8.2.1-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: .
+      dockerfile: apps/backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://lossline:lossline_demo@postgres:5432/lossline
+      DIRECT_DATABASE_URL: postgresql://lossline:lossline_demo@postgres:5432/lossline
+      REDIS_URL: redis://redis:6379/0
+      DEMO_MODE: "true"
+      DEBUG: "false"
     depends_on:
-      - redis
-    restart: always
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/ready')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports: ["8000:8000"]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/frontend/Dockerfile
+    depends_on:
+      backend: { condition: service_healthy }
+    ports: ["3000:80"]
+
+  simulator:
+    build:
+      context: .
+      dockerfile: simulator/Dockerfile
+    profiles: ["demo"]
+    depends_on:
+      backend: { condition: service_healthy }
 
 volumes:
-  redis_data:
+  lossline-postgres:
