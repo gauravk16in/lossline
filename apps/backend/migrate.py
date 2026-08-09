@@ -13,6 +13,7 @@ if url.startswith("postgres://"):
 print("Connecting to the direct migration database (10 second connection timeout)...", flush=True)
 engine = create_engine(url, connect_args={"connect_timeout": 10}, pool_pre_ping=True)
 config = Config(os.path.join(os.path.dirname(__file__), "alembic.ini"))
+config.set_main_option("script_location", os.path.join(os.path.dirname(__file__), "migrations"))
 with engine.connect() as connection:
     print("Migration database connected; acquiring advisory lock...", flush=True)
     connection.execute(text("SELECT pg_advisory_lock(hashtext('lossline_alembic'))"))
