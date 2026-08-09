@@ -1,88 +1,45 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React from 'react';
 import { ThemeProvider, CssBaseline, Box } from '@mui/material';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import theme from './theme';
 import { Sidebar } from '../components/layout/Sidebar';
-import { IncidentsPage } from '../pages/IncidentsPage';
-import { IncidentDetailPage } from '../pages/IncidentDetailPage';
-import { OutletsPage } from '../pages/OutletsPage';
-import { ActionsPage } from '../pages/ActionsPage';
-import { PredictiveTodayPage } from '../pages/PredictiveTodayPage';
-import { useIncidents } from '../hooks/useIncidents';
-import { useRealtime } from '../hooks/useRealtime';
-import { api } from '../api/client';
-import type { Restaurant } from '../types/api';
+import { OverviewPage } from '../pages/OverviewPage';
+import { ForecastsPage } from '../pages/ForecastsPage';
+import { RisksPage } from '../pages/RisksPage';
+import { DecisionsPage } from '../pages/DecisionsPage';
+import '../styles.css';
 
+/**
+ * AppShell — wraps sidebar + routed content.
+ * Four screens implemented: Overview, Forecasts, Risks, Decisions.
+ */
 function AppShell() {
-  const { incidents, summary, loading, error, refresh } = useIncidents();
-  const { status: connectionStatus } = useRealtime(refresh);
-  const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [restaurantsLoading, setRestaurantsLoading] = useState(true);
-
-  const loadRestaurants = useCallback(async () => {
-    try {
-      const list = await api.getRestaurants();
-      setRestaurants(list);
-    } catch {
-      // Non-fatal
-    } finally {
-      setRestaurantsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void loadRestaurants();
-    // Refresh restaurants every 30s for auto-provisioned outlets
-    const timer = window.setInterval(loadRestaurants, 30000);
-    return () => clearInterval(timer);
-  }, [loadRestaurants]);
-
-  const activeCount = summary?.active_incident_count ?? 0;
-
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', backgroundColor: 'background.default' }}>
-      <Sidebar
-        activeIncidentCount={activeCount}
-        connectionStatus={connectionStatus}
-      />
-      <Box sx={{ flex: 1, overflow: 'auto' }}>
+    <Box
+      sx={{
+        display: 'flex',
+        minHeight: '100vh',
+        backgroundColor: 'background.default',
+      }}
+    >
+      <Sidebar />
+      <Box
+        component="main"
+        sx={{
+          flex: 1,
+          overflow: 'auto',
+          minWidth: 0,
+        }}
+      >
         <Routes>
-          <Route
-            path="/"
-            element={<PredictiveTodayPage restaurants={restaurants} restaurantsLoading={restaurantsLoading} />}
-          />
-          <Route path="/predictive" element={<PredictiveTodayPage restaurants={restaurants} restaurantsLoading={restaurantsLoading} />} />
-          <Route
-            path="/incidents"
-            element={
-              <IncidentsPage
-                incidents={incidents}
-                loading={loading}
-                error={error}
-              />
-            }
-          />
-          <Route path="/incidents/:id" element={<IncidentDetailPage />} />
-          <Route
-            path="/outlets"
-            element={
-              <OutletsPage
-                restaurants={restaurants}
-                incidents={incidents}
-                loading={restaurantsLoading}
-                error={error}
-              />
-            }
-          />
-          <Route
-            path="/actions"
-            element={
-              <ActionsPage
-                incidents={incidents}
-                loading={loading}
-              />
-            }
-          />
+          <Route path="/" element={<OverviewPage />} />
+          <Route path="/forecasts" element={<ForecastsPage />} />
+          <Route path="/risks" element={<RisksPage />} />
+          <Route path="/decisions" element={<DecisionsPage />} />
+          {/* Future routes:
+            <Route path="/outlets"   element={<OutletsPage />} />
+            <Route path="/settings"  element={<SettingsPage />} />
+          */}
         </Routes>
       </Box>
     </Box>
