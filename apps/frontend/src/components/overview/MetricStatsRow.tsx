@@ -1,13 +1,14 @@
 import React from 'react';
 import { Box } from '@mui/material';
 import { MetricStatCard } from './MetricStatCard';
-import { metricStats } from '../../data/overviewMockData';
+import { useDashboard } from '../../state/DashboardContext';
 
 /**
  * MetricStatsRow — horizontal row of 4 MetricStatCards.
  * Responsive: stacks 2×2 on smaller viewports.
  */
 export const MetricStatsRow: React.FC = () => {
+  const { metricStats } = useDashboard();
   return (
     <Box
       id="metric-stats-row"

@@ -1,13 +1,14 @@
 import React from 'react';
-import { Box, Typography, Paper, LinearProgress } from '@mui/material';
+import { Box, Typography, LinearProgress } from '@mui/material';
 import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
-import { forecastDrivers } from '../../data/forecastsMockData';
+import { useDashboard } from '../../state/DashboardContext';
 
 /**
  * ForecastDriversPanel — right-side panel showing what's influencing today's forecast.
  * Consistent styling with PriorityDecisionPanel from overview.
  */
 export const ForecastDriversPanel: React.FC = () => {
+  const { forecastDrivers } = useDashboard();
   return (
     <Box
       id="forecast-drivers-panel"

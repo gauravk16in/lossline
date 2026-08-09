@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 import { Target, TrendingUp, BarChart3, Clock } from 'lucide-react';
-import type { ForecastAccuracyMetric } from '../../data/forecastsMockData';
+import type { ForecastAccuracyMetric } from '../../data/viewModels';
 
 /** Maps metric icon names to lucide-react components + accent colors */
 const ICON_CONFIG: Record<

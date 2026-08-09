@@ -49,7 +49,8 @@ class Restaurant(Base):
     name = Column(String, nullable=False)
     timezone = Column(String, nullable=False, default="UTC")
     currency = Column(String, nullable=False, default="INR")
-    synthetic = Column(Boolean, nullable=False, default=True)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), nullable=True, index=True)
+    synthetic = Column(Boolean, nullable=False, default=False)
     metadata_json = Column("metadata", JSONB_TYPE, nullable=True)
     created_at = Column(
         DateTime(timezone=True),
@@ -60,6 +61,32 @@ class Restaurant(Base):
     metric_windows = relationship("MetricWindow", back_populates="restaurant")
     signals = relationship("Signal", back_populates="restaurant")
     incidents = relationship("Incident", back_populates="restaurant")
+
+
+class Organization(Base):
+    __tablename__ = "organizations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    clerk_organization_id = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)
+
+
+class IntegrationCredential(Base):
+    __tablename__ = "integration_credentials"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    public_prefix = Column(String, unique=True, nullable=False, index=True)
+    secret_hash = Column(String, nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True)
+    allowed_outlet_ids = Column(JSONB_TYPE, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(datetime.timezone.utc), nullable=False)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class RateLimitBucket(Base):
+    __tablename__ = "rate_limit_buckets"
+    bucket_key = Column(String, primary_key=True)
+    window_start = Column(DateTime(timezone=True), nullable=False)
+    request_count = Column(Integer, nullable=False, default=0)
 
 
 class Event(Base):
@@ -92,6 +119,10 @@ class Event(Base):
     outbox_attempt_count = Column(Integer, nullable=False, default=0)
     outbox_last_error = Column(String, nullable=True)
     outbox_published_at = Column(DateTime(timezone=True), nullable=True)
+    processing_status = Column(String, nullable=False, default="PENDING", index=True)
+    processing_attempt_count = Column(Integer, nullable=False, default=0)
+    processing_last_error = Column(String, nullable=True)
+    processing_result = Column(JSONB_TYPE, nullable=True)
 
     restaurant = relationship("Restaurant", back_populates="events")
 

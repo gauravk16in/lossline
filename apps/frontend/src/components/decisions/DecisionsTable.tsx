@@ -2,21 +2,20 @@ import React, { useState } from 'react';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
 import { Filter, MoreHorizontal, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
-  decisionItems,
-  decisionTabs,
   type DecisionStatus,
-  type RiskLevel,
-} from '../../data/decisionsMockData';
+  type DisplayRiskLevel,
+} from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
 
 /** Risk dot colors */
-const RISK_DOT: Record<RiskLevel, string> = {
+const RISK_DOT: Record<DisplayRiskLevel, string> = {
   High: '#EF4444',
   Medium: '#F59E0B',
   Low: '#22C55E',
 };
 
 /** Risk badge background */
-const RISK_BG: Record<RiskLevel, string> = {
+const RISK_BG: Record<DisplayRiskLevel, string> = {
   High: 'rgba(239,68,68,0.15)',
   Medium: 'rgba(245,158,11,0.15)',
   Low: 'rgba(34,197,94,0.15)',
@@ -28,6 +27,7 @@ const RISK_BG: Record<RiskLevel, string> = {
  * columns: Decision, Risk, Forecast Demand, Available Inventory, Projected Gap, Deadline, Status, Action
  */
 export const DecisionsTable: React.FC = () => {
+  const { decisionItems, decisionTabs, selectDecision } = useDashboard();
   const [activeTab, setActiveTab] = useState<DecisionStatus>('Pending');
 
   return (
@@ -149,7 +149,7 @@ export const DecisionsTable: React.FC = () => {
       </Box>
 
       {/* ── Rows ── */}
-      {decisionItems.map((item) => {
+      {decisionItems.filter((item) => item.status === activeTab).map((item) => {
         const dotColor = RISK_DOT[item.riskLevel];
         const riskBg = RISK_BG[item.riskLevel];
 
@@ -271,12 +271,13 @@ export const DecisionsTable: React.FC = () => {
                 variant="caption"
                 sx={{ color: '#F59E0B', fontWeight: 600, fontSize: '0.6875rem' }}
               >
-                Pending
+                {item.status}
               </Typography>
             </Box>
 
             {/* Action */}
             <Button
+              onClick={() => selectDecision(item.id)}
               size="small"
               sx={{
                 color: '#A78BFA',
@@ -310,7 +311,7 @@ export const DecisionsTable: React.FC = () => {
         }}
       >
         <Typography variant="caption" sx={{ color: '#525C6C' }}>
-          Showing 1 to 8 of 8 decisions
+          Showing {decisionItems.filter((item) => item.status === activeTab).length} of {decisionItems.length} decisions
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <IconButton size="small" sx={{ color: '#525C6C' }}>

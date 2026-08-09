@@ -1,5 +1,7 @@
 FROM node:22.20-alpine AS build
 WORKDIR /app
+ARG VITE_MANAGER_API_KEY
+ENV VITE_MANAGER_API_KEY=$VITE_MANAGER_API_KEY
 COPY apps/frontend/package.json apps/frontend/package-lock.json ./
 RUN npm ci
 COPY apps/frontend ./

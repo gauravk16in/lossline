@@ -1,7 +1,8 @@
 import React from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 import { Info } from 'lucide-react';
-import { heatmapData, heatmapDays, type RiskLevel } from '../../data/risksMockData';
+import type { RiskLevel } from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
 
 /** Cell background colors by risk level */
 const CELL_COLORS: Record<RiskLevel | 'NONE', string> = {
@@ -24,6 +25,7 @@ const CELL_BORDERS: Record<RiskLevel | 'NONE', string> = {
  * Cell color intensity by risk level; cell number = count of at-risk items.
  */
 export const RiskHeatmap: React.FC = () => {
+  const { heatmapData, heatmapDays } = useDashboard();
   return (
     <Paper
       id="risk-heatmap"
@@ -38,7 +40,7 @@ export const RiskHeatmap: React.FC = () => {
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2.5 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
           <Typography variant="h2" sx={{ color: '#F4F7FB' }}>
-            Risk Heatmap
+            Risk Window
           </Typography>
           <Info size={14} color="#525C6C" style={{ cursor: 'help' }} />
         </Box>
@@ -143,7 +145,7 @@ export const RiskHeatmap: React.FC = () => {
 
       {/* Footer */}
       <Typography variant="caption" sx={{ color: '#525C6C', fontSize: '0.6875rem', mt: 1.5, display: 'block' }}>
-        Numbers represent count of at-risk items
+        Numbers represent persisted at-risk items in the active forecast window
       </Typography>
     </Paper>
   );

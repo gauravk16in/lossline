@@ -8,6 +8,7 @@ import { ForecastsPage } from '../pages/ForecastsPage';
 import { RisksPage } from '../pages/RisksPage';
 import { DecisionsPage } from '../pages/DecisionsPage';
 import '../styles.css';
+import { DashboardProvider } from '../state/DashboardContext';
 
 /**
  * AppShell — wraps sidebar + routed content.
@@ -36,6 +37,7 @@ function AppShell() {
           <Route path="/forecasts" element={<ForecastsPage />} />
           <Route path="/risks" element={<RisksPage />} />
           <Route path="/decisions" element={<DecisionsPage />} />
+          <Route path="*" element={<OverviewPage />} />
           {/* Future routes:
             <Route path="/outlets"   element={<OutletsPage />} />
             <Route path="/settings"  element={<SettingsPage />} />
@@ -51,7 +53,7 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
-        <AppShell />
+        <DashboardProvider><AppShell /></DashboardProvider>
       </BrowserRouter>
     </ThemeProvider>
   );

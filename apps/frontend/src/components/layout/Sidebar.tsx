@@ -5,10 +5,7 @@ import {
   BarChart3,
   AlertTriangle,
   FileText,
-  Store,
-  Settings,
   Circle,
-  ChevronRight,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -25,7 +22,6 @@ const mainNavItems: NavItem[] = [
   { label: 'Forecasts',  path: '/forecasts',  icon: BarChart3 },
   { label: 'Risks',      path: '/risks',      icon: AlertTriangle },
   { label: 'Decisions',  path: '/decisions',  icon: FileText },
-  { label: 'Outlets',    path: '/outlets',     icon: Store },
 ];
 
 function isActive(path: string, currentPath: string): boolean {
@@ -213,24 +209,6 @@ export const Sidebar: React.FC = () => {
         </Typography>
       </Box>
 
-      {/* ── Settings ── */}
-      <Box
-        onClick={() => navigate('/settings')}
-        sx={{
-          mx: 1.5, mb: 1.5, px: 1.5, py: 1,
-          borderRadius: '10px',
-          display: 'flex', alignItems: 'center', gap: 1,
-          cursor: 'pointer',
-          transition: 'background-color 150ms ease',
-          '&:hover': { backgroundColor: 'rgba(255,255,255,0.04)' },
-        }}
-      >
-        <Settings size={16} color="#525C6C" />
-        <Typography variant="body2" sx={{ color: '#8B95A8', flex: 1, fontSize: '0.8125rem' }}>
-          Settings
-        </Typography>
-        <ChevronRight size={14} color="#525C6C" />
-      </Box>
     </Drawer>
   );
 };

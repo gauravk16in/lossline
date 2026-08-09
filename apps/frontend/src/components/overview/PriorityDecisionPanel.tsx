@@ -2,14 +2,17 @@ import React from 'react';
 import { Box, Typography, Button, Divider } from '@mui/material';
 import { Sparkles, ArrowRight, Zap } from 'lucide-react';
 import { KeyDriversList } from './KeyDriversList';
-import { priorityDecision } from '../../data/overviewMockData';
+import { useDashboard } from '../../state/DashboardContext';
+import { useNavigate } from 'react-router-dom';
 
 /**
  * PriorityDecisionPanel — right-side panel showing the highest-priority decision.
  * Contains item details, key drivers, recommended action, and CTA button.
  */
 export const PriorityDecisionPanel: React.FC = () => {
-  const d = priorityDecision;
+  const { priorityDecision: d } = useDashboard();
+  const navigate = useNavigate();
+  if (!d) return null;
 
   return (
     <Box
@@ -186,6 +189,7 @@ export const PriorityDecisionPanel: React.FC = () => {
 
         {/* CTA Button */}
         <Button
+          onClick={() => navigate('/decisions')}
           variant="contained"
           fullWidth
           endIcon={<ArrowRight size={16} />}

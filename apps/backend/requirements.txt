@@ -9,7 +9,7 @@ aiosqlite==0.22.1
 alembic==1.19.1
 psycopg2-binary==2.9.12
 redis==8.1.0
-websockets==17.0.1
+websockets==15.0.1
 python-dotenv==1.2.2
 httpx==0.28.1
 langgraph==1.2.9

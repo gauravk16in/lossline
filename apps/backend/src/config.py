@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     DEBUG: bool = Field(default=True)
     DEMO_MODE: bool = Field(default=True)
     INLINE_PROCESSING: bool = Field(default=False)
+    SERVERLESS_MODE: bool = Field(default=False)
     APP_HOST: str = Field(default="0.0.0.0")
     APP_PORT: int = Field(default=8000)
 
@@ -45,6 +46,14 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str | None = Field(default=None)
     ALLOW_GLOBAL_DEMO_RESET: bool = Field(default=False)
     WS_ALLOWED_ORIGINS: str = Field(default="http://localhost:3000")
+    CLERK_ISSUER: str | None = Field(default=None)
+    CLERK_JWKS_URL: str | None = Field(default=None)
+    CLERK_AUTHORIZED_PARTIES: str = Field(default="")
+    CREDENTIAL_PEPPER: str | None = Field(default=None)
+    EVENT_RATE_LIMIT: int = Field(default=300, gt=0)
+    READ_RATE_LIMIT: int = Field(default=120, gt=0)
+    WRITE_RATE_LIMIT: int = Field(default=30, gt=0)
+    ADMIN_RATE_LIMIT: int = Field(default=20, gt=0)
 
     # (Optional) LLM & Tracing configurations — LangGraph deferred until
     # deterministic detection → correlate → recommend path is proven.

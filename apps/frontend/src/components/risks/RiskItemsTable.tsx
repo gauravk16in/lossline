@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { Box, Typography, Paper, Button, IconButton } from '@mui/material';
 import { Filter, MoreHorizontal, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
-import { riskItems, type RiskLevel } from '../../data/risksMockData';
+import type { RiskLevel } from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
 
 /** Risk badge color config — same as AtRiskTable for consistency */
 const RISK_COLORS: Record<RiskLevel, { text: string; bg: string; border: string }> = {
@@ -18,6 +19,7 @@ type TabValue = 'risk' | 'category' | 'outlet';
  * columns: Item, Risk Level, Projected Issue, Expected Time, Impact (₹), Action.
  */
 export const RiskItemsTable: React.FC = () => {
+  const { riskItems, selectRisk } = useDashboard();
   const [activeTab, setActiveTab] = useState<TabValue>('risk');
 
   const tabs: { value: TabValue; label: string }[] = [
@@ -181,6 +183,7 @@ export const RiskItemsTable: React.FC = () => {
 
             {/* Action */}
             <Button
+              onClick={() => selectRisk(item.id)}
               size="small"
               startIcon={<Eye size={12} />}
               sx={{
@@ -201,7 +204,7 @@ export const RiskItemsTable: React.FC = () => {
       {/* Pagination */}
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mt: 2, pt: 2, borderTop: '1px solid rgba(255,255,255,0.06)' }}>
         <Typography variant="caption" sx={{ color: '#525C6C' }}>
-          1–5 of 12 items
+          {riskItems.length ? `1–${riskItems.length} of ${riskItems.length} items` : 'No current risk items'}
         </Typography>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           <IconButton size="small" sx={{ color: '#525C6C' }}>

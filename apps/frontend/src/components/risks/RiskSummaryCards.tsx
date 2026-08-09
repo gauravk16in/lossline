@@ -1,7 +1,8 @@
 import React from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 import { AlertTriangle, AlertCircle, ShieldCheck, Layers, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { riskSummaryCards, type RiskSummaryCard } from '../../data/risksMockData';
+import type { RiskSummaryCard } from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
 
 const ICON_MAP: Record<RiskSummaryCard['icon'], React.ElementType> = {
   'alert-triangle': AlertTriangle,
@@ -21,6 +22,7 @@ const TREND_ICONS: Record<string, React.ElementType> = {
  * Matches the design's top row: High Risk | Medium Risk | Low Risk | Total At Risk
  */
 export const RiskSummaryCardsRow: React.FC = () => {
+  const { riskSummaryCards } = useDashboard();
   return (
     <Box
       id="risk-summary-cards"

@@ -33,6 +33,7 @@ services:
       INGEST_API_KEY: ${INGEST_API_KEY:?set INGEST_API_KEY in .env}
       MANAGER_API_KEY: ${MANAGER_API_KEY:?set MANAGER_API_KEY in .env}
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY in .env}
+      ALLOW_GLOBAL_DEMO_RESET: ${ALLOW_GLOBAL_DEMO_RESET:-false}
       DEMO_MODE: "true"
       DEBUG: "false"
     depends_on:
@@ -49,6 +50,8 @@ services:
     build:
       context: .
       dockerfile: apps/frontend/Dockerfile
+      args:
+        VITE_MANAGER_API_KEY: ${MANAGER_API_KEY:?set MANAGER_API_KEY in .env}
     depends_on:
       backend: { condition: service_healthy }
     ports: ["3000:80"]

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Typography, Paper } from '@mui/material';
 import { TrendingUp, ShieldAlert, Clock, IndianRupee } from 'lucide-react';
-import type { MetricStat } from '../../data/overviewMockData';
+import type { MetricStat } from '../../data/viewModels';
 
 /** Maps stat icon names to lucide-react components + accent colors */
 const ICON_CONFIG: Record<
@@ -90,7 +90,7 @@ export const MetricStatCard: React.FC<MetricStatCardProps> = ({ stat }) => {
 
       {/* Subtitle */}
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-        {stat.subtitleColor && stat.id === 'expected-orders' && (
+        {stat.subtitleColor && (
           <Typography
             component="span"
             sx={{
@@ -99,7 +99,7 @@ export const MetricStatCard: React.FC<MetricStatCardProps> = ({ stat }) => {
               fontWeight: 500,
             }}
           >
-            ↗ 18%
+            ↗
           </Typography>
         )}
         <Typography

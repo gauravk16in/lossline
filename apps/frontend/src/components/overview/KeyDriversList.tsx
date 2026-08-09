@@ -6,7 +6,7 @@ import {
   Tag,
   MapPin,
 } from 'lucide-react';
-import type { KeyDriver } from '../../data/overviewMockData';
+import type { KeyDriver } from '../../data/viewModels';
 
 /** Maps driver icon names to lucide-react components */
 const ICON_MAP: Record<KeyDriver['icon'], React.ElementType> = {

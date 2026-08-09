@@ -8,13 +8,13 @@ import {
   CloudRain,
   Tag,
   Zap,
-  ArrowRight,
   X,
   Check,
 } from 'lucide-react';
-import { decisionDetail, type RiskLevel } from '../../data/decisionsMockData';
+import type { DisplayRiskLevel } from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
 
-const RISK_BADGE: Record<RiskLevel, { text: string; bg: string; border: string }> = {
+const RISK_BADGE: Record<DisplayRiskLevel, { text: string; bg: string; border: string }> = {
   High:   { text: '#EF4444', bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.2)' },
   Medium: { text: '#F59E0B', bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.2)' },
   Low:    { text: '#22C55E', bg: 'rgba(34,197,94,0.1)',   border: 'rgba(34,197,94,0.2)' },
@@ -32,9 +32,10 @@ const DRIVER_ICONS: Record<string, React.ElementType> = {
  * "Why this matters", "Top Drivers", "Recommended Action", Reject/Approve buttons.
  */
 export const DecisionDetailPanel: React.FC = () => {
-  const d = decisionDetail;
-  const badge = RISK_BADGE[d.riskLevel];
+  const { decisionDetail: d, reviewDecision, loading, error } = useDashboard();
   const [note, setNote] = useState('');
+  if (!d) return null;
+  const badge = RISK_BADGE[d.riskLevel];
 
   return (
     <Box
@@ -208,6 +209,8 @@ export const DecisionDetailPanel: React.FC = () => {
           {/* Reject / Approve buttons */}
           <Box sx={{ display: 'flex', gap: 1, mb: 1.5 }}>
             <Button
+              disabled={loading || d.status !== 'AWAITING_MANAGER_REVIEW'}
+              onClick={() => void reviewDecision('REJECT', note)}
               variant="outlined"
               startIcon={<X size={14} />}
               sx={{
@@ -228,6 +231,8 @@ export const DecisionDetailPanel: React.FC = () => {
               Reject
             </Button>
             <Button
+              disabled={loading || d.status !== 'AWAITING_MANAGER_REVIEW'}
+              onClick={() => void reviewDecision('APPROVE', note)}
               variant="contained"
               startIcon={<Check size={14} />}
               sx={{
@@ -247,7 +252,7 @@ export const DecisionDetailPanel: React.FC = () => {
                 },
               }}
             >
-              Approve
+              {loading ? 'Saving…' : 'Approve'}
             </Button>
           </Box>
 
@@ -280,6 +285,7 @@ export const DecisionDetailPanel: React.FC = () => {
               },
             }}
           />
+          {error && <Typography role="alert" variant="caption" sx={{ color: '#EF4444', display: 'block', mt: 1 }}>{error}</Typography>}
         </Box>
       </Box>
     </Box>

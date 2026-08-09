@@ -1,7 +1,9 @@
 import React from 'react';
 import { Box, Typography, Button, Divider } from '@mui/material';
 import { ArrowLeft, ArrowRight, Calendar, CloudRain, Tag, Zap } from 'lucide-react';
-import { riskDetailItem, type RiskLevel } from '../../data/risksMockData';
+import type { RiskLevel } from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
+import { useNavigate } from 'react-router-dom';
 
 const RISK_BADGE: Record<RiskLevel, { text: string; bg: string; border: string }> = {
   HIGH:   { text: '#EF4444', bg: 'rgba(239,68,68,0.1)',  border: 'rgba(239,68,68,0.2)' },
@@ -21,7 +23,9 @@ const DRIVER_ICONS: Record<string, React.ElementType> = {
  * Consistent styling with PriorityDecisionPanel from overview.
  */
 export const RiskDetailPanel: React.FC = () => {
-  const d = riskDetailItem;
+  const { riskDetailItem: d } = useDashboard();
+  const navigate = useNavigate();
+  if (!d) return null;
   const badge = RISK_BADGE[d.riskLevel];
 
   return (
@@ -185,6 +189,7 @@ export const RiskDetailPanel: React.FC = () => {
 
         {/* CTA Button */}
         <Button
+          onClick={() => navigate('/decisions')}
           variant="contained"
           fullWidth
           endIcon={<ArrowRight size={16} />}

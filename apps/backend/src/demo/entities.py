@@ -29,6 +29,22 @@ MEGHANA_INDIRANAGAR = DemoRestaurant(
     ),
 )
 
-DEMO_RESTAURANTS: Mapping[str, DemoRestaurant] = MappingProxyType(
-    {MEGHANA_INDIRANAGAR.id: MEGHANA_INDIRANAGAR}
+MEGHANA_HSR_LAYOUT = DemoRestaurant(
+    id="meghana_hsr_layout",
+    name="Meghana Biryani – HSR Layout",
+    timezone="Asia/Kolkata",
+    currency="INR",
+    metadata=MappingProxyType(
+        {
+            "brand": "Meghana Biryani",
+            "locality": "HSR Layout",
+            "city": "Bengaluru",
+            "scenario": "service_window_demo",
+        }
+    ),
 )
+
+DEMO_RESTAURANTS: Mapping[str, DemoRestaurant] = MappingProxyType({
+    MEGHANA_INDIRANAGAR.id: MEGHANA_INDIRANAGAR,
+    MEGHANA_HSR_LAYOUT.id: MEGHANA_HSR_LAYOUT,
+})

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Typography, Paper, LinearProgress } from '@mui/material';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { skuForecasts } from '../../data/forecastsMockData';
+import { useDashboard } from '../../state/DashboardContext';
 
 const TREND_ICONS: Record<string, React.ElementType> = {
   up: TrendingUp,
@@ -19,6 +19,7 @@ const TREND_COLORS: Record<string, string> = {
  * Consistent card styling with AtRiskTable.
  */
 export const SkuForecastTable: React.FC = () => {
+  const { skuForecasts } = useDashboard();
   return (
     <Paper
       id="sku-forecast-table"

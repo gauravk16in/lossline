@@ -1,6 +1,7 @@
 import type { AnalyticsSummary, Incident, PredictiveToday, Restaurant } from '../types/api';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
+const MANAGER_API_KEY = import.meta.env.VITE_MANAGER_API_KEY as string | undefined;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -16,12 +17,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   restaurants: () => request<Restaurant[]>('/restaurants'),
+  serviceWindows: (outletId: string) => request<{ outlet_id: string; service_windows: string[] }>(`/predictive/service-windows/${encodeURIComponent(outletId)}`),
   predictiveToday: (outletId: string, serviceWindow: string) => request<PredictiveToday>(`/predictive/today/${encodeURIComponent(outletId)}/${encodeURIComponent(serviceWindow)}`),
   predictiveSummary: () => request<{ forecast_count: number; risk_count: number; pending_review_count: number; synthetic: boolean }>('/predictive/analytics/summary'),
   incidents: () => request<Incident[]>('/incidents'),
   analytics: () => request<AnalyticsSummary>('/analytics/summary'),
   reviewDecision: (decisionId: string, decision: 'APPROVE' | 'REJECT', note?: string) => request<{ decision_id: string; status: string; duplicate: boolean }>(`/predictive/decisions/${encodeURIComponent(decisionId)}/review`, {
     method: 'POST',
-    body: JSON.stringify({ decision, manager_id: 'dashboard_manager', manager_note: note || null, idempotency_key: `dashboard-${decisionId}-${decision.toLowerCase()}` }),
+    headers: MANAGER_API_KEY ? { 'X-LOSSLine-Key': MANAGER_API_KEY } : undefined,
+    body: JSON.stringify({ decision, manager_id: 'dashboard_manager', manager_note: note || null, idempotency_key: crypto.randomUUID() }),
   }),
 };

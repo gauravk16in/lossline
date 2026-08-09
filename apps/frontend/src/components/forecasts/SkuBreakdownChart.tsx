@@ -10,7 +10,7 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import { hourlyForecastBreakdown } from '../../data/forecastsMockData';
+import { useDashboard } from '../../state/DashboardContext';
 
 /**
  * Custom tooltip — consistent with DemandForecastChart tooltip style.
@@ -47,6 +47,7 @@ const CustomTooltip: React.FC<{
  * SkuBreakdownChart — stacked bar chart showing hourly demand per SKU.
  */
 export const SkuBreakdownChart: React.FC = () => {
+  const { hourlyForecastBreakdown, hourlySkuSeries } = useDashboard();
   return (
     <Paper
       id="sku-breakdown-chart"
@@ -79,9 +80,10 @@ export const SkuBreakdownChart: React.FC = () => {
             iconType="circle"
             iconSize={8}
           />
-          <Bar dataKey="chickenBiryani" name="Chicken Biryani" stackId="a" fill="#A78BFA" radius={[0, 0, 0, 0]} />
-          <Bar dataKey="paneerBiryani" name="Paneer Biryani" stackId="a" fill="#F59E0B" radius={[0, 0, 0, 0]} />
-          <Bar dataKey="vegFriedRice" name="Veg Fried Rice" stackId="a" fill="#22C55E" radius={[4, 4, 0, 0]} />
+          {hourlySkuSeries.map((series, index) => (
+            <Bar key={series.key} dataKey={series.key} name={series.name} stackId="demand"
+              fill={series.color} radius={index === hourlySkuSeries.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+          ))}
         </BarChart>
       </ResponsiveContainer>
     </Paper>

@@ -11,7 +11,7 @@ import {
   ResponsiveContainer,
   ReferenceLine,
 } from 'recharts';
-import { demandForecastData, NOW_INDEX } from '../../data/overviewMockData';
+import { useDashboard } from '../../state/DashboardContext';
 
 /**
  * Custom tooltip for the demand forecast chart.
@@ -87,6 +87,8 @@ const NowLabel: React.FC<{ viewBox?: { x: number; y: number } }> = ({
  * Uses recharts ComposedChart with Area (range) + Line (actual + forecast).
  */
 export const DemandForecastChart: React.FC = () => {
+  const { demandForecastData, nowIndex: NOW_INDEX } = useDashboard();
+  if (!demandForecastData.length) return null;
   return (
     <Paper
       id="demand-forecast-chart"
@@ -212,8 +214,7 @@ export const DemandForecastChart: React.FC = () => {
             tickFormatter={(v: number) =>
               v >= 1000 ? `${(v / 1000).toFixed(v % 1000 === 0 ? 0 : 1)}K` : String(v)
             }
-            domain={[0, 2200]}
-            ticks={[0, 500, 1000, 1500, 2000]}
+            domain={[0, 'auto']}
           />
 
           <Tooltip content={<CustomTooltip />} />

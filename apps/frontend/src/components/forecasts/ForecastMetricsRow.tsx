@@ -1,12 +1,13 @@
 import React from 'react';
 import { Box } from '@mui/material';
 import { ForecastMetricCard } from './ForecastMetricCard';
-import { forecastAccuracyMetrics } from '../../data/forecastsMockData';
+import { useDashboard } from '../../state/DashboardContext';
 
 /**
  * ForecastMetricsRow — 4-card grid row, same layout as MetricStatsRow.
  */
 export const ForecastMetricsRow: React.FC = () => {
+  const { forecastAccuracyMetrics } = useDashboard();
   return (
     <Box
       id="forecast-metrics-row"

@@ -1,12 +1,15 @@
 import React from 'react';
-import { Box, Typography, Select, MenuItem } from '@mui/material';
+import { Box, Typography, Select, MenuItem, IconButton, Tooltip } from '@mui/material';
 import { MapPin, Calendar, Circle } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
+import { useDashboard } from '../../state/DashboardContext';
 
 /**
  * TopBar — outlet picker, date picker, and live status indicator.
  * Positioned at the top of the center content area.
  */
 export const TopBar: React.FC = () => {
+  const { restaurants, outletId, setOutletId, serviceWindow, setServiceWindow, serviceWindows, loading, error, refreshedAt, refresh } = useDashboard();
   return (
     <Box
       id="top-bar"
@@ -26,7 +29,8 @@ export const TopBar: React.FC = () => {
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
         {/* Outlet Picker */}
         <Select
-          value="indiranagar"
+          value={outletId}
+          onChange={(event) => setOutletId(event.target.value)}
           size="small"
           IconComponent={() => null}
           sx={{
@@ -49,21 +53,20 @@ export const TopBar: React.FC = () => {
               backgroundColor: 'rgba(255,255,255,0.06)',
             },
           }}
-          renderValue={() => (
+          renderValue={(value) => (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <MapPin size={14} color="#8B95A8" />
-              <span>Indiranagar Outlet</span>
+              <span>{restaurants.find((item) => item.id === value)?.name || value}</span>
             </Box>
           )}
         >
-          <MenuItem value="indiranagar">Indiranagar Outlet</MenuItem>
-          <MenuItem value="koramangala">Koramangala Outlet</MenuItem>
-          <MenuItem value="hsr">HSR Layout Outlet</MenuItem>
+          {restaurants.map((restaurant) => <MenuItem key={restaurant.id} value={restaurant.id}>{restaurant.name}</MenuItem>)}
         </Select>
 
-        {/* Date Picker */}
+        {/* Service-window picker */}
         <Select
-          value="today"
+          value={serviceWindow}
+          onChange={(event) => setServiceWindow(event.target.value)}
           size="small"
           IconComponent={() => null}
           sx={{
@@ -89,13 +92,11 @@ export const TopBar: React.FC = () => {
           renderValue={() => (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Calendar size={14} color="#8B95A8" />
-              <span>Today, 12 May</span>
+              <span>{serviceWindow}</span>
             </Box>
           )}
         >
-          <MenuItem value="today">Today, 12 May</MenuItem>
-          <MenuItem value="yesterday">Yesterday, 11 May</MenuItem>
-          <MenuItem value="tomorrow">Tomorrow, 13 May</MenuItem>
+          {serviceWindows.map((window) => <MenuItem key={window} value={window}>{window[0] + window.slice(1).toLowerCase()}</MenuItem>)}
         </Select>
       </Box>
 
@@ -111,8 +112,8 @@ export const TopBar: React.FC = () => {
       >
         <Circle
           size={8}
-          fill="#22C55E"
-          color="#22C55E"
+          fill={error ? '#EF4444' : '#22C55E'}
+          color={error ? '#EF4444' : '#22C55E'}
           style={{
             filter: 'drop-shadow(0 0 4px rgba(34,197,94,0.6))',
             animation: 'pulse 2s ease-in-out infinite',
@@ -128,7 +129,7 @@ export const TopBar: React.FC = () => {
               lineHeight: 1.2,
             }}
           >
-            Live
+            {error ? 'Offline' : loading ? 'Updating' : 'Live'}
           </Typography>
           <Typography
             variant="caption"
@@ -139,9 +140,10 @@ export const TopBar: React.FC = () => {
               display: 'block',
             }}
           >
-            Updated 08:45 AM
+            {error || (refreshedAt ? `Updated ${refreshedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Connecting')}
           </Typography>
         </Box>
+        <Tooltip title="Refresh live data"><IconButton size="small" onClick={() => void refresh()} disabled={loading} sx={{ color: '#8B95A8' }}><RefreshCw size={14} /></IconButton></Tooltip>
       </Box>
     </Box>
   );

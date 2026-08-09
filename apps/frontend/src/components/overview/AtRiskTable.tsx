@@ -1,6 +1,8 @@
 import React from 'react';
 import { Box, Typography, Paper, Button } from '@mui/material';
-import { atRiskItems, type RiskLevel } from '../../data/overviewMockData';
+import type { RiskLevel } from '../../data/viewModels';
+import { useDashboard } from '../../state/DashboardContext';
+import { useNavigate } from 'react-router-dom';
 
 /** Risk badge color config */
 const RISK_COLORS: Record<RiskLevel, { text: string; bg: string; border: string }> = {
@@ -14,6 +16,8 @@ const RISK_COLORS: Record<RiskLevel, { text: string; bg: string; border: string 
  * Shows item thumbnail, forecast, available, gap, and risk badge.
  */
 export const AtRiskTable: React.FC = () => {
+  const { atRiskItems } = useDashboard();
+  const navigate = useNavigate();
   return (
     <Paper
       id="at-risk-table"
@@ -37,6 +41,7 @@ export const AtRiskTable: React.FC = () => {
           At-Risk Items
         </Typography>
         <Button
+          onClick={() => navigate('/risks')}
           variant="text"
           size="small"
           sx={{

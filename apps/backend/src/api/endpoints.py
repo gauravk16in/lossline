@@ -238,6 +238,18 @@ async def get_predictive_forecasts(outlet_id: str, service_window: str,
     return [row.payload for row in rows]
 
 
+@router.get("/predictive/service-windows/{outlet_id}")
+async def get_predictive_service_windows(outlet_id: str,
+    db: AsyncSession = Depends(get_db_session)):
+    """Return user-selectable service windows backed by persisted forecasts."""
+    rows = (await db.execute(select(ForecastRecord.service_window).where(
+        ForecastRecord.outlet_id == outlet_id).distinct())).scalars().all()
+    # Hourly records are chart detail, not a separate meal period selector.
+    windows = sorted({value.removesuffix("_HOURLY") for value in rows
+        if value not in {"HOURLY"}})
+    return {"outlet_id": outlet_id, "service_windows": windows}
+
+
 @router.get("/predictive/today/{outlet_id}/{service_window}")
 async def get_predictive_today(outlet_id: str, service_window: str,
     db: AsyncSession = Depends(get_db_session)):
@@ -633,7 +645,8 @@ async def analytics_summary(db: AsyncSession = Depends(get_db_session)):
 
 
 @router.post("/demo/reset")
-async def reset_demo(db: AsyncSession = Depends(get_db_session)):
+async def reset_demo(db: AsyncSession = Depends(get_db_session),
+    _: None = Depends(require_admin_key)):
     """
     Cleans synthetic run-derived records from the tables to support clean repeatable scenarios.
     """
