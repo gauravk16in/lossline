@@ -81,7 +81,7 @@ Actual: 16 registered features covering calendar, weather, promotion, inventory,
 - The pipeline does not import from the simulator; test helpers convert `SyntheticWindow` to pipeline input types.
 - Rolling features (multi-window aggregates) are not implemented — only single-lag.
 - No backend persistence, API endpoints, or frontend types introduced (C19 concern).
-- `pyproject.toml` requires Python ≥3.12; tests were verified on 3.11 with temporarily relaxed constraint.
+- Verified on the repository Python 3.12 environment. The C03→C04 simulator test path is explicit, so all 37 focused tests execute without skips.
 
 ## Manual checks
 

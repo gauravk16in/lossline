@@ -11,8 +11,15 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import os
+import sys
 
 import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+SIMULATOR_ROOT = os.path.join(ROOT, "simulator")
+if SIMULATOR_ROOT not in sys.path:
+    sys.path.insert(0, SIMULATOR_ROOT)
 
 from lossline_intelligence.features.catalog import build_demo_registry
 from lossline_intelligence.features.pipeline import (
