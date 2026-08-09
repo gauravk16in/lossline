@@ -9,6 +9,9 @@ import { RisksPage } from '../pages/RisksPage';
 import { DecisionsPage } from '../pages/DecisionsPage';
 import '../styles.css';
 import { DashboardProvider } from '../state/DashboardContext';
+import { OrganizationSwitcher, SignIn, SignedIn, SignedOut, UserButton, useAuth } from '@clerk/react';
+import { setSessionTokenProvider } from '../api/client';
+import { useEffect } from 'react';
 
 /**
  * AppShell — wraps sidebar + routed content.
@@ -48,12 +51,26 @@ function AppShell() {
   );
 }
 
+function AuthenticatedApp() {
+  const { getToken } = useAuth();
+  useEffect(() => { setSessionTokenProvider(getToken); }, [getToken]);
+  return <>
+    <SignedOut><Box sx={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}><SignIn /></Box></SignedOut>
+    <SignedIn>
+      <Box sx={{ position: 'fixed', zIndex: 1400, top: 14, right: 18, display: 'flex', gap: 1, alignItems: 'center' }}>
+        <OrganizationSwitcher hidePersonal afterSelectOrganizationUrl="/" /><UserButton />
+      </Box>
+      <DashboardProvider><AppShell /></DashboardProvider>
+    </SignedIn>
+  </>;
+}
+
 export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
-        <DashboardProvider><AppShell /></DashboardProvider>
+        <AuthenticatedApp />
       </BrowserRouter>
     </ThemeProvider>
   );

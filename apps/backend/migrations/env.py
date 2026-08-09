@@ -44,13 +44,15 @@ def run_migrations_online() -> None:
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql://", 1)
 
-    connectable = engine_from_config(
+    supplied_connection = config.attributes.get("connection")
+    connectable = supplied_connection or engine_from_config(
         {"sqlalchemy.url": url},
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
 
-    with connectable.connect() as connection:
+    connection_context = (connectable.begin() if supplied_connection is None else __import__("contextlib").nullcontext(supplied_connection))
+    with connection_context as connection:
         context.configure(
             connection=connection, target_metadata=target_metadata
         )

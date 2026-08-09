@@ -33,7 +33,7 @@ class EntitySchema(ContractModel):
 
 
 class MetadataSchema(ContractModel):
-    synthetic: bool = True
+    synthetic: bool = False
     scenario_id: str | None = None
     scenario_run_id: str | None = Field(default=None, min_length=1, max_length=128)
     sequence: int | None = None

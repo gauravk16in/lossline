@@ -1,12 +1,17 @@
 import type { AnalyticsSummary, Incident, PredictiveToday, Restaurant } from '../types/api';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || '/api/v1').replace(/\/$/, '');
-const MANAGER_API_KEY = import.meta.env.VITE_MANAGER_API_KEY as string | undefined;
+let tokenProvider: (() => Promise<string | null>) | null = null;
+
+export function setSessionTokenProvider(provider: () => Promise<string | null>) {
+  tokenProvider = provider;
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = await tokenProvider?.();
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init?.headers || {}) },
   });
   if (!response.ok) {
     const problem = await response.json().catch(() => null) as { detail?: string } | null;
@@ -24,7 +29,6 @@ export const api = {
   analytics: () => request<AnalyticsSummary>('/analytics/summary'),
   reviewDecision: (decisionId: string, decision: 'APPROVE' | 'REJECT', note?: string) => request<{ decision_id: string; status: string; duplicate: boolean }>(`/predictive/decisions/${encodeURIComponent(decisionId)}/review`, {
     method: 'POST',
-    headers: MANAGER_API_KEY ? { 'X-LOSSLine-Key': MANAGER_API_KEY } : undefined,
-    body: JSON.stringify({ decision, manager_id: 'dashboard_manager', manager_note: note || null, idempotency_key: crypto.randomUUID() }),
+    body: JSON.stringify({ decision, manager_note: note || null, idempotency_key: crypto.randomUUID() }),
   }),
 };

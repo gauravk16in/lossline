@@ -41,11 +41,27 @@ from src.config import settings
 from src.demo.entities import DEMO_RESTAURANTS
 from src.intelligence.outcomes import verify_incident_outcome
 from src.intelligence.predictive_persistence import select_forecast_strategy
-from src.api.security import require_admin_key, require_ingest_key, require_manager_key
+from src.api.security import (
+    IngestionContext, UserContext, require_admin_key, require_ingest_key,
+    require_manager_key, require_user,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
+
+
+def organization_filter(user: UserContext):
+    """Local demo remains unscoped; production always resolves a real organization."""
+    return True if not settings.SERVERLESS_MODE else Restaurant.organization_id == user.organization_id
+
+
+async def require_owned_outlet(db: AsyncSession, user: UserContext, outlet_id: str) -> Restaurant:
+    stmt = select(Restaurant).where(Restaurant.id == outlet_id)
+    if settings.SERVERLESS_MODE: stmt = stmt.where(Restaurant.organization_id == user.organization_id)
+    row = (await db.execute(stmt)).scalars().first()
+    if row is None: raise HTTPException(status_code=404, detail="Outlet not found")
+    return row
 
 
 def compute_payload_hash(envelope: EventEnvelope) -> str:
@@ -59,7 +75,7 @@ def compute_payload_hash(envelope: EventEnvelope) -> str:
 @router.post("/events", status_code=202)
 async def ingest_event(
     envelope: EventEnvelope, db: AsyncSession = Depends(get_db_session),
-    _: None = Depends(require_ingest_key),
+    ingestion: IngestionContext = Depends(require_ingest_key),
 ):
     """
     Ingests canonical events, checking for duplicates and auto-provisioning restaurants.
@@ -75,11 +91,17 @@ async def ingest_event(
             logger.info(
                 f"Duplicate event {envelope.event_id} received with identical payload. Returning 202."
             )
-            return {
+            if existing_event.processing_status == "COMPLETED":
+                return {
                 "event_id": envelope.event_id,
                 "status": "accepted",
                 "duplicate": True,
-            }
+                "processing_status": "COMPLETED",
+                **(existing_event.processing_result or {}),
+                }
+            if existing_event.processing_status == "PROCESSING":
+                return {"event_id": envelope.event_id, "status": "accepted", "duplicate": True,
+                    "processing_status": "PROCESSING"}
         else:
             logger.warning(
                 f"Conflict: Event {envelope.event_id} received with differing payload."
@@ -89,11 +111,20 @@ async def ingest_event(
                 detail=f"Event ID {envelope.event_id} already exists with a different payload.",
             )
 
-    # Auto-provision Restaurant if not exists to facilitate smooth simulator runs
+    if settings.SERVERLESS_MODE and envelope.metadata.synthetic:
+        raise HTTPException(status_code=422, detail="Synthetic events are prohibited in production")
+    if settings.SERVERLESS_MODE and envelope.outlet_id not in ingestion.allowed_outlet_ids:
+        raise HTTPException(status_code=403, detail="Integration is not authorized for this outlet")
+
+    # Auto-provisioning is strictly a local demo convenience.
     res_check = await db.execute(
         select(Restaurant).filter(Restaurant.id == envelope.restaurant_id)
     )
     restaurant = res_check.scalars().first()
+    if not restaurant and settings.SERVERLESS_MODE:
+        raise HTTPException(status_code=404, detail="Outlet must be provisioned before ingestion")
+    if restaurant and settings.SERVERLESS_MODE and restaurant.organization_id != ingestion.organization_id:
+        raise HTTPException(status_code=403, detail="Integration is not authorized for this outlet")
     if not restaurant:
         logger.info(f"Auto-provisioning missing restaurant: {envelope.restaurant_id}")
         demo_restaurant = DEMO_RESTAURANTS.get(envelope.restaurant_id)
@@ -113,7 +144,7 @@ async def ingest_event(
         await db.flush()  # Flush so FK is resolvable
 
     # Write event record to outbox (published_to_stream = False)
-    new_event = Event(
+    new_event = existing_event or Event(
         event_id=envelope.event_id,
         restaurant_id=envelope.restaurant_id,
         outlet_id=envelope.outlet_id,
@@ -126,50 +157,67 @@ async def ingest_event(
         metadata_json=envelope.metadata.model_dump(),
         schema_version=envelope.schema_version,
         payload_hash=p_hash,
-        published_to_stream=False,
+        published_to_stream=settings.SERVERLESS_MODE,
+        processing_status="PENDING",
     )
-    db.add(new_event)
+    if existing_event is None: db.add(new_event)
+    new_event.processing_status = "PROCESSING"
+    new_event.processing_attempt_count += 1
+    new_event.processing_last_error = None
     await db.flush()
 
-    predictive_result = None
-    if envelope.event_type == EventType.PREDICTIVE_WINDOW_SCHEDULED:
-        from src.intelligence.predictive_cycle import process_scheduled_window
-        predictive_result = await process_scheduled_window(db, envelope)
-    elif envelope.event_type == EventType.DEMAND_WINDOW_OBSERVED:
-        from src.intelligence.predictive_cycle import process_observed_window
-        outcome_ids = await process_observed_window(db, envelope)
-        predictive_result = {"outcome_ids": list(outcome_ids)}
+    try:
+        predictive_result = None
+        if envelope.event_type == EventType.PREDICTIVE_WINDOW_SCHEDULED:
+            from src.intelligence.predictive_cycle import process_scheduled_window
+            predictive_result = await process_scheduled_window(db, envelope)
+        elif envelope.event_type == EventType.DEMAND_WINDOW_OBSERVED:
+            from src.intelligence.predictive_cycle import process_observed_window
+            predictive_result = {"outcome_ids": list(await process_observed_window(db, envelope))}
+        elif settings.INLINE_PROCESSING:
+            await db.commit()
+            from src.intelligence.pipeline import run_detection_pipeline
+            await run_detection_pipeline(envelope, db_session=db)
+        incident_ids = list((await db.execute(select(Incident.id).where(
+            Incident.restaurant_id == envelope.outlet_id,
+            Incident.window_start <= envelope.occurred_at,
+            Incident.window_end >= envelope.occurred_at))).scalars().all())
+        result_payload = {"predictive": predictive_result, "incident_ids": incident_ids,
+            "artifact_ids": list((predictive_result or {}).values()) if predictive_result else []}
+        new_event.processing_status = "COMPLETED"
+        new_event.processing_result = result_payload
+        await db.flush()
+    except Exception as exc:
+        await db.rollback()
+        failed = (await db.execute(select(Event).where(Event.event_id == envelope.event_id))).scalars().first()
+        if failed is not None:
+            failed.processing_status = "FAILED"; failed.processing_last_error = str(exc)[:2000]
+            failed.processing_attempt_count = max(failed.processing_attempt_count, new_event.processing_attempt_count)
+            await db.commit()
+        logger.exception("Synchronous processing failed for event %s", envelope.event_id)
+        raise HTTPException(status_code=500, detail="Event persisted but intelligence processing failed") from exc
 
-    if settings.INLINE_PROCESSING and envelope.event_type not in {
-        EventType.PREDICTIVE_WINDOW_SCHEDULED, EventType.DEMAND_WINDOW_OBSERVED,
-    }:
-        # Local no-infrastructure mode: preserve durability before deriving state.
-        await db.commit()
-        from src.intelligence.pipeline import run_detection_pipeline
-
-        await run_detection_pipeline(envelope, db_session=db)
-
-    return {"event_id": envelope.event_id, "status": "accepted", "duplicate": False,
-        "predictive": predictive_result}
+    return {"event_id": envelope.event_id, "status": "accepted", "duplicate": existing_event is not None,
+        "processing_status": new_event.processing_status, **result_payload}
 
 
 @router.get("/restaurants")
-async def get_restaurants(db: AsyncSession = Depends(get_db_session)):
+async def get_restaurants(db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
     """
     Get all active restaurants and basic details.
     """
-    result = await db.execute(select(Restaurant))
+    result = await db.execute(select(Restaurant).where(organization_filter(user)))
     return result.scalars().all()
 
 
 @router.get("/incidents")
 async def get_incidents(
-    status: str | None = None, db: AsyncSession = Depends(get_db_session)
+    status: str | None = None, db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)
 ):
     """
     Retrieves the incident feed.
     """
-    stmt = select(Incident)
+    stmt = select(Incident).join(Restaurant).where(organization_filter(user))
     if status:
         stmt = stmt.filter(Incident.status == status)
     stmt = stmt.options(selectinload(Incident.recommendations)).order_by(
@@ -180,13 +228,13 @@ async def get_incidents(
 
 
 @router.get("/incidents/{id}")
-async def get_incident(id: int, db: AsyncSession = Depends(get_db_session)):
+async def get_incident(id: int, db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
     """
     Retrieves full details of a specific incident, including associated signals and recommendations.
     """
     stmt = (
         select(Incident)
-        .filter(Incident.id == id)
+        .join(Restaurant).filter(Incident.id == id).where(organization_filter(user))
         .options(selectinload(Incident.signals), selectinload(Incident.recommendations))
     )
     result = await db.execute(stmt)
@@ -223,14 +271,14 @@ class ScenarioRunPayload(BaseModel):
 class PredictiveManagerReviewPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: Literal["APPROVE", "REJECT"]
-    manager_id: str
     idempotency_key: str
     manager_note: str | None = None
 
 
 @router.get("/predictive/forecasts/{outlet_id}/{service_window}")
 async def get_predictive_forecasts(outlet_id: str, service_window: str,
-    db: AsyncSession = Depends(get_db_session)):
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    await require_owned_outlet(db, user, outlet_id)
     rows = (await db.execute(select(ForecastRecord).where(
         ForecastRecord.outlet_id == outlet_id,
         ForecastRecord.service_window == service_window,
@@ -240,7 +288,8 @@ async def get_predictive_forecasts(outlet_id: str, service_window: str,
 
 @router.get("/predictive/service-windows/{outlet_id}")
 async def get_predictive_service_windows(outlet_id: str,
-    db: AsyncSession = Depends(get_db_session)):
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    await require_owned_outlet(db, user, outlet_id)
     """Return user-selectable service windows backed by persisted forecasts."""
     rows = (await db.execute(select(ForecastRecord.service_window).where(
         ForecastRecord.outlet_id == outlet_id).distinct())).scalars().all()
@@ -252,7 +301,8 @@ async def get_predictive_service_windows(outlet_id: str,
 
 @router.get("/predictive/today/{outlet_id}/{service_window}")
 async def get_predictive_today(outlet_id: str, service_window: str,
-    db: AsyncSession = Depends(get_db_session)):
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    outlet = await require_owned_outlet(db, user, outlet_id)
     forecasts = (await db.execute(select(ForecastRecord).where(
         ForecastRecord.outlet_id == outlet_id,
         ForecastRecord.service_window == service_window,
@@ -299,13 +349,15 @@ async def get_predictive_today(outlet_id: str, service_window: str,
             "evaluation_type": row.evaluation_type, "forecast_id": row.forecast_id,
             "decision_id": row.decision_id, "evaluation": row.payload}
             for row in evaluations],
-        "synthetic": True}
+        "synthetic": outlet.synthetic}
 
 
 @router.get("/predictive/features/{snapshot_id}")
 async def get_predictive_feature_snapshot(snapshot_id: str,
-    db: AsyncSession = Depends(get_db_session)):
-    row = await db.get(PredictiveFeatureSnapshot, snapshot_id)
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    row = (await db.execute(select(PredictiveFeatureSnapshot).join(Restaurant,
+        PredictiveFeatureSnapshot.outlet_id == Restaurant.id).where(
+        PredictiveFeatureSnapshot.snapshot_id == snapshot_id, organization_filter(user)))).scalars().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Feature snapshot not found")
     return row.payload
@@ -313,30 +365,38 @@ async def get_predictive_feature_snapshot(snapshot_id: str,
 
 @router.get("/predictive/projections/inventory/{projection_id}")
 async def get_predictive_inventory_projection(projection_id: str,
-    db: AsyncSession = Depends(get_db_session)):
-    row = await db.get(InventoryProjectionRecord, projection_id)
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    row = (await db.execute(select(InventoryProjectionRecord).join(Restaurant,
+        InventoryProjectionRecord.outlet_id == Restaurant.id).where(
+        InventoryProjectionRecord.projection_id == projection_id, organization_filter(user)))).scalars().first()
     if row is None: raise HTTPException(status_code=404, detail="Inventory projection not found")
     return row.payload
 
 
 @router.get("/predictive/projections/capacity/{projection_id}")
 async def get_predictive_capacity_projection(projection_id: str,
-    db: AsyncSession = Depends(get_db_session)):
-    row = await db.get(CapacityProjectionRecord, projection_id)
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    row = (await db.execute(select(CapacityProjectionRecord).join(Restaurant,
+        CapacityProjectionRecord.outlet_id == Restaurant.id).where(
+        CapacityProjectionRecord.projection_id == projection_id, organization_filter(user)))).scalars().first()
     if row is None: raise HTTPException(status_code=404, detail="Capacity projection not found")
     return row.payload
 
 
 @router.get("/predictive/dossiers/{dossier_id}")
-async def get_predictive_dossier(dossier_id: str, db: AsyncSession = Depends(get_db_session)):
-    row = await db.get(ForecastDossierRecord, dossier_id)
+async def get_predictive_dossier(dossier_id: str, db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    row = (await db.execute(select(ForecastDossierRecord).join(Restaurant,
+        ForecastDossierRecord.outlet_id == Restaurant.id).where(
+        ForecastDossierRecord.dossier_id == dossier_id, organization_filter(user)))).scalars().first()
     if row is None: raise HTTPException(status_code=404, detail="Forecast dossier not found")
     return row.payload
 
 
 @router.get("/predictive/decisions/{decision_id}")
-async def get_predictive_decision(decision_id: str, db: AsyncSession = Depends(get_db_session)):
-    row = await db.get(PredictiveDecisionRecord, decision_id)
+async def get_predictive_decision(decision_id: str, db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    row = (await db.execute(select(PredictiveDecisionRecord).join(Restaurant,
+        PredictiveDecisionRecord.outlet_id == Restaurant.id).where(
+        PredictiveDecisionRecord.decision_id == decision_id, organization_filter(user)))).scalars().first()
     if row is None: raise HTTPException(status_code=404, detail="Predictive decision not found")
     return {"decision": row.payload, "status": row.status, "manager_decision": row.manager_decision,
         "manager_id": row.manager_id, "manager_note": row.manager_note}
@@ -344,16 +404,18 @@ async def get_predictive_decision(decision_id: str, db: AsyncSession = Depends(g
 
 @router.post("/predictive/decisions/{decision_id}/review")
 async def review_predictive_decision(decision_id: str, payload: PredictiveManagerReviewPayload,
-    db: AsyncSession = Depends(get_db_session), _: None = Depends(require_manager_key)):
-    if not payload.manager_id.strip() or not payload.idempotency_key.strip():
-        raise HTTPException(status_code=422, detail="manager_id and idempotency_key must be non-empty")
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_manager_key)):
+    if not payload.idempotency_key.strip():
+        raise HTTPException(status_code=422, detail="idempotency_key must be non-empty")
     replay = (await db.execute(select(PredictiveDecisionRecord).where(
         PredictiveDecisionRecord.idempotency_key == payload.idempotency_key))).scalars().first()
     if replay is not None:
         if replay.decision_id != decision_id or replay.manager_decision != payload.decision:
             raise HTTPException(status_code=409, detail="Idempotency key already used for a different review")
         return {"decision_id": replay.decision_id, "status": replay.status, "duplicate": True}
-    row = await db.get(PredictiveDecisionRecord, decision_id)
+    row = (await db.execute(select(PredictiveDecisionRecord).join(Restaurant,
+        PredictiveDecisionRecord.outlet_id == Restaurant.id).where(
+        PredictiveDecisionRecord.decision_id == decision_id, organization_filter(user)))).scalars().first()
     if row is None: raise HTTPException(status_code=404, detail="Predictive decision not found")
     if row.status != "AWAITING_MANAGER_REVIEW":
         raise HTTPException(status_code=409, detail="Decision is not awaiting manager review")
@@ -373,7 +435,7 @@ async def review_predictive_decision(decision_id: str, payload: PredictiveManage
         except (LookupError, ValueError) as exc:
             raise HTTPException(status_code=409, detail=f"Predictive checkpoint conflict: {exc}")
     row.manager_decision = payload.decision
-    row.manager_id = payload.manager_id.strip()
+    row.manager_id = user.subject
     row.manager_note = payload.manager_note
     row.idempotency_key = payload.idempotency_key.strip()
     row.decided_at = datetime.datetime.now(datetime.timezone.utc)
@@ -386,21 +448,26 @@ async def review_predictive_decision(decision_id: str, payload: PredictiveManage
 
 
 @router.get("/predictive/model-strategy")
-async def predictive_model_strategy(db: AsyncSession = Depends(get_db_session)):
+async def predictive_model_strategy(db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
     return await select_forecast_strategy(db)
 
 
 @router.get("/predictive/outcomes/{forecast_id}")
-async def get_predictive_outcome(forecast_id: str, db: AsyncSession = Depends(get_db_session)):
-    row = (await db.execute(select(ActualOutcomeRecord).where(
-        ActualOutcomeRecord.forecast_id == forecast_id))).scalars().first()
+async def get_predictive_outcome(forecast_id: str, db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    row = (await db.execute(select(ActualOutcomeRecord).join(Restaurant,
+        ActualOutcomeRecord.outlet_id == Restaurant.id).where(
+        ActualOutcomeRecord.forecast_id == forecast_id, organization_filter(user)))).scalars().first()
     if row is None: raise HTTPException(status_code=404, detail="Matured outcome not found")
     return row.payload
 
 
 @router.get("/predictive/evaluations/forecast/{forecast_id}")
 async def get_predictive_forecast_evaluations(forecast_id: str,
-    db: AsyncSession = Depends(get_db_session)):
+    db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    owned = (await db.execute(select(ForecastRecord.forecast_id).join(Restaurant,
+        ForecastRecord.outlet_id == Restaurant.id).where(ForecastRecord.forecast_id == forecast_id,
+        organization_filter(user)))).scalar_one_or_none()
+    if owned is None: raise HTTPException(status_code=404, detail="Forecast not found")
     rows = (await db.execute(select(PredictiveEvaluationRecord).where(
         PredictiveEvaluationRecord.forecast_id == forecast_id).order_by(
         PredictiveEvaluationRecord.created_at))).scalars().all()
@@ -409,13 +476,14 @@ async def get_predictive_forecast_evaluations(forecast_id: str,
 
 
 @router.get("/predictive/analytics/summary")
-async def predictive_analytics_summary(db: AsyncSession = Depends(get_db_session)):
+async def predictive_analytics_summary(db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    outlet_ids = select(Restaurant.id).where(organization_filter(user))
     return {
-        "forecast_count": await db.scalar(select(func.count(ForecastRecord.forecast_id))) or 0,
-        "risk_count": await db.scalar(select(func.count(RiskCandidateRecord.risk_id))) or 0,
+        "forecast_count": await db.scalar(select(func.count(ForecastRecord.forecast_id)).where(ForecastRecord.outlet_id.in_(outlet_ids))) or 0,
+        "risk_count": await db.scalar(select(func.count(RiskCandidateRecord.risk_id)).where(RiskCandidateRecord.outlet_id.in_(outlet_ids))) or 0,
         "pending_review_count": await db.scalar(select(func.count(PredictiveDecisionRecord.decision_id)).where(
-            PredictiveDecisionRecord.status == "AWAITING_MANAGER_REVIEW")) or 0,
-        "synthetic": True,
+            PredictiveDecisionRecord.status == "AWAITING_MANAGER_REVIEW", PredictiveDecisionRecord.outlet_id.in_(outlet_ids))) or 0,
+        "synthetic": False if settings.SERVERLESS_MODE else True,
     }
 
 
@@ -490,7 +558,7 @@ async def delete_demo_run(run_id: str, db: AsyncSession = Depends(get_db_session
 @router.post("/incidents/{id}/decision")
 async def submit_decision(
     id: int, payload: DecisionPayload, db: AsyncSession = Depends(get_db_session),
-    _: None = Depends(require_manager_key),
+    user: UserContext = Depends(require_manager_key),
 ):
     """
     Submits a manager action decision (Approve, Reject, or Edit).
@@ -509,7 +577,7 @@ async def submit_decision(
     # 2. Query Incident and Recommendations
     stmt = (
         select(Incident)
-        .filter(Incident.id == id)
+        .join(Restaurant).filter(Incident.id == id).where(organization_filter(user))
         .options(selectinload(Incident.recommendations))
     )
     result = await db.execute(stmt)
@@ -541,7 +609,7 @@ async def submit_decision(
         decision=payload.decision,
         suggested_text=rec.action_text,
         final_text=payload.final_action_text or rec.action_text,
-        decided_by="manager_1",  # A8: Default manager identity
+        decided_by=user.subject,
         manager_note=payload.manager_note,
         idempotency_key=payload.idempotency_key,
         decided_at=now_utc,
@@ -573,9 +641,10 @@ async def submit_decision(
 
 @router.post("/actions/{id}/execution")
 async def acknowledge_execution(id: int, db: AsyncSession = Depends(get_db_session),
-    _: None = Depends(require_manager_key)):
+    user: UserContext = Depends(require_manager_key)):
     action = (await db.execute(
-        select(Action).where(Action.id == id).options(
+        select(Action).join(Recommendation).join(Incident).join(Restaurant).where(
+            Action.id == id, organization_filter(user)).options(
             selectinload(Action.recommendation).selectinload(Recommendation.incident)
         )
     )).scalars().first()
@@ -592,8 +661,9 @@ async def acknowledge_execution(id: int, db: AsyncSession = Depends(get_db_sessi
 
 
 @router.get("/incidents/{id}/outcome")
-async def get_outcome(id: int, db: AsyncSession = Depends(get_db_session)):
-    result = await db.execute(select(Outcome).where(Outcome.incident_id == id))
+async def get_outcome(id: int, db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    result = await db.execute(select(Outcome).join(Incident).join(Restaurant).where(
+        Outcome.incident_id == id, organization_filter(user)))
     outcome = result.scalars().first()
     if outcome is None:
         raise HTTPException(status_code=404, detail="Outcome not yet available")
@@ -602,9 +672,10 @@ async def get_outcome(id: int, db: AsyncSession = Depends(get_db_session)):
 
 @router.post("/incidents/{id}/verify")
 async def verify_outcome(id: int, db: AsyncSession = Depends(get_db_session),
-    _: None = Depends(require_manager_key)):
+    user: UserContext = Depends(require_manager_key)):
     incident = (
-        (await db.execute(select(Incident).where(Incident.id == id))).scalars().first()
+        (await db.execute(select(Incident).join(Restaurant).where(Incident.id == id,
+            organization_filter(user)))).scalars().first()
     )
     if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
@@ -624,23 +695,24 @@ async def verify_outcome(id: int, db: AsyncSession = Depends(get_db_session),
 
 
 @router.get("/analytics/summary")
-async def analytics_summary(db: AsyncSession = Depends(get_db_session)):
-    incident_count = await db.scalar(select(func.count(Incident.id)))
+async def analytics_summary(db: AsyncSession = Depends(get_db_session), user: UserContext = Depends(require_user)):
+    outlet_ids = select(Restaurant.id).where(organization_filter(user))
+    incident_count = await db.scalar(select(func.count(Incident.id)).where(Incident.restaurant_id.in_(outlet_ids)))
     active_count = await db.scalar(
         select(func.count(Incident.id)).where(
-            Incident.status.not_in(("RESOLVED", "ACTION_REJECTED", "NOT_IMPROVED"))
+            Incident.status.not_in(("RESOLVED", "ACTION_REJECTED", "NOT_IMPROVED")), Incident.restaurant_id.in_(outlet_ids)
         )
     )
     resolved_count = await db.scalar(
-        select(func.count(Incident.id)).where(Incident.status == "RESOLVED")
+        select(func.count(Incident.id)).where(Incident.status == "RESOLVED", Incident.restaurant_id.in_(outlet_ids))
     )
-    exposure = await db.scalar(select(func.sum(Incident.revenue_at_risk)))
+    exposure = await db.scalar(select(func.sum(Incident.revenue_at_risk)).where(Incident.restaurant_id.in_(outlet_ids)))
     return {
         "incident_count": incident_count or 0,
         "active_incident_count": active_count or 0,
         "resolved_incident_count": resolved_count or 0,
         "estimated_exposure": exposure or 0,
-        "synthetic": True,
+        "synthetic": False if settings.SERVERLESS_MODE else True,
     }
 
 
@@ -690,6 +762,8 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     WebSocket channel for fanning out operational stage changes.
     """
+    if settings.SERVERLESS_MODE:
+        await websocket.close(code=1008); return
     origin = websocket.headers.get("origin")
     allowed = {item.strip() for item in settings.WS_ALLOWED_ORIGINS.split(",") if item.strip()}
     protocols = {item.strip() for item in websocket.headers.get("sec-websocket-protocol", "").split(",")}

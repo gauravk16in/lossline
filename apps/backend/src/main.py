@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from src.config import settings
 from src.api.endpoints import router
+from src.api.admin import router as admin_router
 from src.streaming.publisher import RedisPublisher
 from src.streaming.outbox_worker import start_outbox_worker
 from src.streaming.consumer import start_redis_consumer
@@ -29,12 +30,28 @@ from typing import Any
 background_tasks: dict[str, asyncio.Task[Any]] = {}
 
 
+def validate_production_configuration() -> None:
+    if not settings.SERVERLESS_MODE:
+        return
+    errors = []
+    if settings.DEMO_MODE: errors.append("DEMO_MODE must be false")
+    if not settings.INLINE_PROCESSING: errors.append("INLINE_PROCESSING must be true")
+    if settings.DEBUG: errors.append("DEBUG must be false")
+    if settings.DATABASE_URL.startswith("sqlite"): errors.append("PostgreSQL DATABASE_URL is required")
+    if not settings.DATABASE_URL.startswith(("postgresql", "postgres")): errors.append("DATABASE_URL must use PostgreSQL")
+    if not settings.CLERK_ISSUER or not settings.CLERK_JWKS_URL: errors.append("Clerk issuer and JWKS URL are required")
+    if not settings.CREDENTIAL_PEPPER: errors.append("CREDENTIAL_PEPPER is required")
+    if settings.MANAGER_API_KEY or settings.ADMIN_API_KEY: errors.append("browser/admin shared credentials are prohibited")
+    if errors: raise RuntimeError("Invalid serverless production configuration: " + "; ".join(errors))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Context manager to handle application lifecycle events.
     Setup Redis connection, Publisher, and start background workers.
     """
+    validate_production_configuration()
     logger.info("Starting up LOSSLine Backend...")
 
     if settings.DATABASE_URL.startswith("sqlite"):
@@ -42,7 +59,7 @@ async def lifespan(app: FastAPI):
             await connection.run_sync(Base.metadata.create_all)
 
     redis_client = None
-    if not settings.INLINE_PROCESSING:
+    if not settings.SERVERLESS_MODE and not settings.INLINE_PROCESSING:
         redis_client = Redis.from_url(settings.REDIS_URL)
         app.state.redis = redis_client
         publisher = RedisPublisher(redis_client)
@@ -83,6 +100,10 @@ app = FastAPI(
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
+        if settings.SERVERLESS_MODE and (
+            request.url.path.startswith("/api/v1/demo/") or request.url.path == "/api/v1/ws"
+        ):
+            return JSONResponse({"detail": "Not found"}, status_code=404)
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > settings.MAX_REQUEST_BYTES:
             return JSONResponse({"detail": "Request body exceeds 256 KiB limit"}, status_code=413)
@@ -100,11 +121,12 @@ app.add_middleware(
     allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_credentials=False,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-LOSSLine-Key"],
+    allow_headers=["Authorization", "Content-Type", "X-LOSSLine-Key"],
 )
 
 # Include API routes
 app.include_router(router)
+app.include_router(admin_router)
 
 @app.get("/health")
 async def health_check():
@@ -123,6 +145,7 @@ async def readiness_check():
     """Report whether authoritative storage and the stream are reachable."""
     async with engine.connect() as connection:
         await connection.execute(text("SELECT 1"))
-    if not settings.INLINE_PROCESSING:
+    validate_production_configuration()
+    if not settings.SERVERLESS_MODE and not settings.INLINE_PROCESSING:
         await app.state.redis.ping()
     return {"status": "ready"}

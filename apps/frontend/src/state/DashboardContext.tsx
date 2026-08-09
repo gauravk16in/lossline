@@ -44,16 +44,28 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const [outlets, dashboard, hourly, predictive, reactive] = await Promise.all([
-        api.restaurants(), api.predictiveToday(outletId, serviceWindow), api.predictiveToday(outletId, `${serviceWindow}_HOURLY`), api.predictiveSummary(), api.analytics(),
+      const outlets = await api.restaurants();
+      const effectiveOutlet = outlets.some((item) => item.id === outletId) ? outletId : outlets[0]?.id;
+      setRestaurants(outlets);
+      if (!effectiveOutlet) throw new Error('No outlets have been provisioned for this organization');
+      if (effectiveOutlet !== outletId) setOutletId(effectiveOutlet);
+      const [dashboard, hourly, predictive, reactive] = await Promise.all([
+        api.predictiveToday(effectiveOutlet, serviceWindow), api.predictiveToday(effectiveOutlet, `${serviceWindow}_HOURLY`), api.predictiveSummary(), api.analytics(),
       ]);
-      setRestaurants(outlets); setToday(dashboard); setHourlyToday(hourly); setSummary(predictive); setExposure(reactive.estimated_exposure);
+      setToday(dashboard); setHourlyToday(hourly); setSummary(predictive); setExposure(reactive.estimated_exposure);
       setRefreshedAt(new Date()); setError(null);
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load dashboard'); }
     finally { setLoading(false); }
   }, [outletId, serviceWindow]);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    const poll = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 5_000);
+    const onVisibility = () => { if (document.visibilityState === 'visible') void refresh(); };
+    const onFocus = () => { void refresh(); };
+    document.addEventListener('visibilitychange', onVisibility); window.addEventListener('focus', onFocus);
+    return () => { window.clearInterval(poll); document.removeEventListener('visibilitychange', onVisibility); window.removeEventListener('focus', onFocus); };
+  }, [refresh]);
   useEffect(() => {
     void api.serviceWindows(outletId).then(({ service_windows }) => {
       if (service_windows.length) {

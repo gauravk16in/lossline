@@ -110,13 +110,17 @@ async def require_user(
     return UserContext(claims["sub"], clerk_org_id, organization.id, role)
 
 
-async def require_manager(user: UserContext = Depends(require_user)) -> UserContext:
+async def require_manager(response: Response, user: UserContext = Depends(require_user),
+    db: AsyncSession = Depends(get_db_session)) -> UserContext:
+    await _limit(db, key=f"user:write:{user.subject}", limit=settings.WRITE_RATE_LIMIT, response=response)
     return user
 
 
-async def require_admin(user: UserContext = Depends(require_user)) -> UserContext:
+async def require_admin(response: Response, user: UserContext = Depends(require_user),
+    db: AsyncSession = Depends(get_db_session)) -> UserContext:
     if user.role != "org:admin":
         raise HTTPException(status_code=403, detail="Organization administrator role required")
+    await _limit(db, key=f"user:admin:{user.subject}", limit=settings.ADMIN_RATE_LIMIT, response=response)
     return user
 
 
