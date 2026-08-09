@@ -174,9 +174,9 @@ def project_inventory(
     available_for_demand = max(0, usable_supply - safety_buffer)
 
     # --- Demand scenarios (rounded to nearest integer) ---------------------
-    demand_point_int = max(0, int(forecast.demand_point.to_integral_value(rounding=ROUND_HALF_UP)))
-    demand_lower_int = max(0, int(forecast.demand_lower.to_integral_value(rounding=ROUND_HALF_UP)))
-    demand_upper_int = max(0, int(forecast.demand_upper.to_integral_value(rounding=ROUND_HALF_UP)))
+    demand_point_int = max(0, int(forecast.point_demand.to_integral_value(rounding=ROUND_HALF_UP)))
+    demand_lower_int = max(0, int(forecast.lower_demand.to_integral_value(rounding=ROUND_HALF_UP)))
+    demand_upper_int = max(0, int(forecast.upper_demand.to_integral_value(rounding=ROUND_HALF_UP)))
 
     # Ending inventory = usable_supply - demand (may be negative → shortage)
     ending_inventory_point = usable_supply - demand_point_int
@@ -193,14 +193,14 @@ def project_inventory(
 
     # --- Risk assessment ---------------------------------------------------
     stockout_risk = shortage_point > 0
-    shortage_severity = _compute_severity(shortage_point, forecast.demand_point)
+    shortage_severity = _compute_severity(shortage_point, forecast.point_demand)
     surplus_threshold = int(safety_buffer * float(surplus_risk_multiplier))
     surplus_risk = surplus_point > surplus_threshold
 
     # --- Stockout-window fraction (only when stockout is projected) --------
     fraction: Decimal | None
     if stockout_risk:
-        fraction = _stockout_window_fraction(available_for_demand, forecast.demand_point)
+        fraction = _stockout_window_fraction(available_for_demand, forecast.point_demand)
     else:
         fraction = None
 

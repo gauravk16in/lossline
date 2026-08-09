@@ -37,9 +37,9 @@ _T1 = _T0.replace(hour=16)
 
 def _forecast(
     *,
-    demand_point: Decimal = Decimal("50"),
-    demand_lower: Decimal = Decimal("40"),
-    demand_upper: Decimal = Decimal("65"),
+    point_demand: Decimal = Decimal("50"),
+    lower_demand: Decimal = Decimal("40"),
+    upper_demand: Decimal = Decimal("65"),
     outlet_id: str = "meghana_indiranagar",
     sku_id: str = "CHICKEN_BIRYANI",
     service_window: str = "DINNER",
@@ -53,22 +53,22 @@ def _forecast(
         prediction_as_of=_T0,
         window_start=_T0,
         window_end=_T1,
-        demand_point=demand_point,
-        demand_lower=demand_lower,
-        demand_upper=demand_upper,
+        point_demand=point_demand,
+        lower_demand=lower_demand,
+        upper_demand=upper_demand,
         interval_method="quantile_regression",
         model_version="model.v1",
         feature_snapshot_id="snap_test_001",
-        data_sufficiency=True,
+        data_sufficient=True,
         quality_flags=(),
     )
 
 
 def _proj(
     *,
-    demand_point: Decimal = Decimal("50"),
-    demand_lower: Decimal = Decimal("40"),
-    demand_upper: Decimal = Decimal("65"),
+    point_demand: Decimal = Decimal("50"),
+    lower_demand: Decimal = Decimal("40"),
+    upper_demand: Decimal = Decimal("65"),
     opening: int = 70,
     replenishment: int = 0,
     safety_buffer_pct: Decimal = DEFAULT_SAFETY_BUFFER_PCT,
@@ -76,9 +76,9 @@ def _proj(
 ) -> InventoryProjection:
     return project_inventory(
         _forecast(
-            demand_point=demand_point,
-            demand_lower=demand_lower,
-            demand_upper=demand_upper,
+            point_demand=point_demand,
+            lower_demand=lower_demand,
+            upper_demand=upper_demand,
         ),
         opening_inventory=opening,
         replenishment_quantity=replenishment,
@@ -94,7 +94,7 @@ def _proj(
 
 class TestNormalCase:
     def test_no_shortage(self) -> None:
-        p = _proj(demand_point=Decimal("50"), opening=70)
+        p = _proj(point_demand=Decimal("50"), opening=70)
         assert p.shortage_point == 0
         assert p.stockout_risk is False
         assert p.shortage_severity is ShortageSeverity.NONE
@@ -104,11 +104,11 @@ class TestNormalCase:
         assert p.usable_supply == 80
 
     def test_no_stockout_window_fraction(self) -> None:
-        p = _proj(demand_point=Decimal("50"), opening=70)
+        p = _proj(point_demand=Decimal("50"), opening=70)
         assert p.stockout_window_fraction is None
 
     def test_ending_inventory_point(self) -> None:
-        p = _proj(demand_point=Decimal("50"), opening=70, replenishment=0)
+        p = _proj(point_demand=Decimal("50"), opening=70, replenishment=0)
         # usable = 70, demand_point_int = 50
         assert p.ending_inventory_point == 20
 
@@ -140,7 +140,7 @@ class TestSafetyBuffer:
 
     def test_buffer_reduces_available_supply(self) -> None:
         # With opening=70, buffer=7, available=63; demand=65 → shortage=2
-        p = _proj(demand_point=Decimal("65"), demand_upper=Decimal("65"), opening=70)
+        p = _proj(point_demand=Decimal("65"), upper_demand=Decimal("65"), opening=70)
         assert p.shortage_point == 2
         assert p.stockout_risk is True
 
@@ -170,9 +170,9 @@ class TestReplenishment:
         # Without replenishment: opening=45, buffer=5, available=40, demand=50 → shortage=10
         # With replenishment=15: usable=60, available=55, no shortage
         p = _proj(
-            demand_point=Decimal("50"),
-            demand_lower=Decimal("40"),
-            demand_upper=Decimal("55"),
+            point_demand=Decimal("50"),
+            lower_demand=Decimal("40"),
+            upper_demand=Decimal("55"),
             opening=45,
             replenishment=15,
         )
@@ -198,9 +198,9 @@ class TestForecastScenarios:
         # demand: lower=40, point=50, upper=65
         # ending_upper = 70-40=30, ending_point = 70-50=20, ending_lower = 70-65=5
         p = _proj(
-            demand_point=Decimal("50"),
-            demand_lower=Decimal("40"),
-            demand_upper=Decimal("65"),
+            point_demand=Decimal("50"),
+            lower_demand=Decimal("40"),
+            upper_demand=Decimal("65"),
             opening=70,
         )
         assert p.ending_inventory_upper == 30
@@ -210,29 +210,29 @@ class TestForecastScenarios:
     def test_ending_inventory_lower_can_be_negative(self) -> None:
         # Worst-case demand (upper=80) exceeds supply → negative ending
         p = _proj(
-            demand_point=Decimal("50"),
-            demand_lower=Decimal("40"),
-            demand_upper=Decimal("80"),
+            point_demand=Decimal("50"),
+            lower_demand=Decimal("40"),
+            upper_demand=Decimal("80"),
             opening=70,
         )
         assert p.ending_inventory_lower < 0
 
     def test_shortage_upper_is_worst_case(self) -> None:
         p = _proj(
-            demand_point=Decimal("55"),
-            demand_lower=Decimal("40"),
-            demand_upper=Decimal("75"),
+            point_demand=Decimal("55"),
+            lower_demand=Decimal("40"),
+            upper_demand=Decimal("75"),
             opening=60,
         )
-        # buffer=6, available=54; demand_upper=75 → shortage_upper=21
+        # buffer=6, available=54; upper_demand=75 → shortage_upper=21
         assert p.shortage_upper > p.shortage_point
 
     def test_surplus_lower_is_worst_case(self) -> None:
         # High demand → less surplus
         p = _proj(
-            demand_point=Decimal("30"),
-            demand_lower=Decimal("20"),
-            demand_upper=Decimal("45"),
+            point_demand=Decimal("30"),
+            lower_demand=Decimal("20"),
+            upper_demand=Decimal("45"),
             opening=70,
         )
         assert p.surplus_lower < p.surplus_point
@@ -288,27 +288,27 @@ class TestShortageSeverity:
 class TestStockoutCase:
     def test_shortage_point_nonzero(self) -> None:
         # opening=40, buffer=4, available=36, demand=50 → shortage=14
-        p = _proj(demand_point=Decimal("50"), demand_lower=Decimal("45"), demand_upper=Decimal("60"), opening=40)
+        p = _proj(point_demand=Decimal("50"), lower_demand=Decimal("45"), upper_demand=Decimal("60"), opening=40)
         assert p.shortage_point == 14
         assert p.stockout_risk is True
 
     def test_stockout_window_fraction_present(self) -> None:
-        p = _proj(demand_point=Decimal("50"), demand_lower=Decimal("45"), demand_upper=Decimal("60"), opening=40)
+        p = _proj(point_demand=Decimal("50"), lower_demand=Decimal("45"), upper_demand=Decimal("60"), opening=40)
         assert p.stockout_window_fraction is not None
         assert Decimal("0") < p.stockout_window_fraction < Decimal("1")
 
     def test_stockout_fraction_at_zero_inventory(self) -> None:
-        p = _proj(demand_point=Decimal("50"), demand_lower=Decimal("45"), demand_upper=Decimal("60"), opening=0, min_safety_buffer=0)
+        p = _proj(point_demand=Decimal("50"), lower_demand=Decimal("45"), upper_demand=Decimal("60"), opening=0, min_safety_buffer=0)
         assert p.stockout_window_fraction == Decimal("0")
 
     def test_stockout_fraction_calculation(self) -> None:
-        # opening=40, buffer=4, available=36, demand_point=50
+        # opening=40, buffer=4, available=36, point_demand=50
         # fraction = 36/50 = 0.72
-        p = _proj(demand_point=Decimal("50"), demand_lower=Decimal("45"), demand_upper=Decimal("60"), opening=40)
+        p = _proj(point_demand=Decimal("50"), lower_demand=Decimal("45"), upper_demand=Decimal("60"), opening=40)
         assert p.stockout_window_fraction == Decimal("0.7200")
 
     def test_shortage_severity_set_on_stockout(self) -> None:
-        p = _proj(demand_point=Decimal("50"), demand_lower=Decimal("45"), demand_upper=Decimal("60"), opening=40)
+        p = _proj(point_demand=Decimal("50"), lower_demand=Decimal("45"), upper_demand=Decimal("60"), opening=40)
         assert p.shortage_severity is not ShortageSeverity.NONE
 
 
@@ -319,15 +319,15 @@ class TestStockoutCase:
 
 class TestSurplusDetection:
     def test_no_surplus_risk_when_close_to_demand(self) -> None:
-        p = _proj(demand_point=Decimal("50"), demand_lower=Decimal("45"), demand_upper=Decimal("55"), opening=60)
+        p = _proj(point_demand=Decimal("50"), lower_demand=Decimal("45"), upper_demand=Decimal("55"), opening=60)
         # buffer=6, available=54, surplus_point=4; threshold = 6×2 = 12
         assert p.surplus_risk is False
 
     def test_surplus_risk_when_large_excess(self) -> None:
         p = _proj(
-            demand_point=Decimal("10"),
-            demand_lower=Decimal("8"),
-            demand_upper=Decimal("12"),
+            point_demand=Decimal("10"),
+            lower_demand=Decimal("8"),
+            upper_demand=Decimal("12"),
             opening=70,
         )
         # buffer=7, available=63, surplus_point=53; threshold = 7×2 = 14 → surplus_risk=True
@@ -335,16 +335,16 @@ class TestSurplusDetection:
 
     def test_surplus_point_nonzero_on_low_demand(self) -> None:
         p = _proj(
-            demand_point=Decimal("20"),
-            demand_lower=Decimal("15"),
-            demand_upper=Decimal("25"),
+            point_demand=Decimal("20"),
+            lower_demand=Decimal("15"),
+            upper_demand=Decimal("25"),
             opening=70,
         )
         assert p.surplus_point > 0
 
     def test_custom_surplus_multiplier(self) -> None:
         p = project_inventory(
-            _forecast(demand_point=Decimal("20"), demand_lower=Decimal("15"), demand_upper=Decimal("25")),
+            _forecast(point_demand=Decimal("20"), lower_demand=Decimal("15"), upper_demand=Decimal("25")),
             opening_inventory=70,
             surplus_risk_multiplier=Decimal("5.0"),  # very permissive
         )
@@ -359,17 +359,17 @@ class TestSurplusDetection:
 
 class TestZeroDemand:
     def test_zero_demand_no_shortage(self) -> None:
-        p = _proj(demand_point=Decimal("0"), demand_lower=Decimal("0"), demand_upper=Decimal("0"), opening=50)
+        p = _proj(point_demand=Decimal("0"), lower_demand=Decimal("0"), upper_demand=Decimal("0"), opening=50)
         assert p.shortage_point == 0
         assert p.stockout_risk is False
 
     def test_zero_demand_all_surplus(self) -> None:
-        p = _proj(demand_point=Decimal("0"), demand_lower=Decimal("0"), demand_upper=Decimal("0"), opening=50)
+        p = _proj(point_demand=Decimal("0"), lower_demand=Decimal("0"), upper_demand=Decimal("0"), opening=50)
         # buffer=5, available=45, surplus_point=45
         assert p.surplus_point == 45
 
     def test_zero_demand_stockout_fraction_none(self) -> None:
-        p = _proj(demand_point=Decimal("0"), demand_lower=Decimal("0"), demand_upper=Decimal("0"), opening=50)
+        p = _proj(point_demand=Decimal("0"), lower_demand=Decimal("0"), upper_demand=Decimal("0"), opening=50)
         assert p.stockout_window_fraction is None
 
 
@@ -424,23 +424,23 @@ class TestInputValidation:
                 prediction_as_of=datetime(2026, 1, 7, 13, 0),  # naive
                 window_start=datetime(2026, 1, 7, 13, 0),
                 window_end=datetime(2026, 1, 7, 16, 0),
-                demand_point=Decimal("50"),
-                demand_lower=Decimal("40"),
-                demand_upper=Decimal("65"),
+                point_demand=Decimal("50"),
+                lower_demand=Decimal("40"),
+                upper_demand=Decimal("65"),
                 interval_method="test",
                 model_version="v1",
                 feature_snapshot_id="snap",
-                data_sufficiency=True,
+                data_sufficient=True,
                 quality_flags=(),
             )
 
     def test_demand_lower_exceeds_point_rejected(self) -> None:
-        with pytest.raises(ValueError, match="demand_lower"):
-            _forecast(demand_lower=Decimal("60"), demand_point=Decimal("50"))
+        with pytest.raises(ValueError, match="lower_demand"):
+            _forecast(lower_demand=Decimal("60"), point_demand=Decimal("50"))
 
     def test_demand_upper_below_point_rejected(self) -> None:
-        with pytest.raises(ValueError, match="demand_upper"):
-            _forecast(demand_upper=Decimal("40"), demand_point=Decimal("50"))
+        with pytest.raises(ValueError, match="upper_demand"):
+            _forecast(upper_demand=Decimal("40"), point_demand=Decimal("50"))
 
 
 # ---------------------------------------------------------------------------
@@ -531,13 +531,13 @@ def _make_forecast_from_synthetic(sw, sku_id: str) -> tuple[ForecastResult, int]
             prediction_as_of=sw.window_start,
             window_start=sw.window_start,
             window_end=sw.window_end,
-            demand_point=base,
-            demand_lower=(base * Decimal("0.80")).quantize(Decimal("1")),
-            demand_upper=(base * Decimal("1.25")).quantize(Decimal("1")),
+            point_demand=base,
+            lower_demand=(base * Decimal("0.80")).quantize(Decimal("1")),
+            upper_demand=(base * Decimal("1.25")).quantize(Decimal("1")),
             interval_method="baseline_range",
             model_version="baseline.v1",
             feature_snapshot_id=f"snap_{sku_id}",
-            data_sufficiency=True,
+            data_sufficient=True,
             quality_flags=(),
         ),
         outcome.opening_inventory_quantity,

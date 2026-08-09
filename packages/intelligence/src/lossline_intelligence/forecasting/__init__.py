@@ -1,8 +1,14 @@
-"""Minimal ForecastResult contract for downstream projection consumers.
+"""Minimal ForecastResult contract for downstream projection consumers (C08/C09).
 
-Person A owns the full forecast pipeline (C05–C07).  This module defines
-the minimal typed contract that C08/C09 projection engines require.
-Person A's implementation will produce objects conforming to this shape.
+Person A owns the full forecast pipeline (C05–C07). ``BaselineForecast`` and
+``GBTForecast`` in ``lossline_intelligence.forecasts`` are the real
+serialization boundaries. This module provides a thin adapter that expresses
+the minimal projection-engine contract in terms of C05/C06 field names
+(``point_demand``, ``lower_demand``, ``upper_demand``, ``data_sufficient``).
+
+Engine functions (``project_inventory``, ``project_capacity``) accept any
+object conforming to this protocol — whether a ``BaselineForecast``, a
+``GBTForecast``, or a ``ForecastResult`` stub in tests.
 """
 
 from __future__ import annotations
@@ -10,18 +16,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Annotated
-
-from pydantic import StringConstraints
-
-Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 @dataclass(frozen=True)
 class ForecastResult:
-    """Immutable demand forecast for one outlet × SKU × service window.
+    """Minimal demand forecast stub matching C05/C06 field names.
 
-    This is an internal domain object (not a serialization boundary).
+    Field names deliberately align with ``BaselineForecast`` and
+    ``GBTForecast`` so that projection engines work with either.
+    Use this class for tests and synthetic scenarios; prefer the real
+    ``BaselineForecast`` / ``GBTForecast`` in production code.
     """
 
     forecast_id: str
@@ -31,13 +35,14 @@ class ForecastResult:
     prediction_as_of: datetime
     window_start: datetime
     window_end: datetime
-    demand_point: Decimal
-    demand_lower: Decimal
-    demand_upper: Decimal
+    # Field names match C05 BaselineForecast and C06 GBTForecast
+    point_demand: Decimal
+    lower_demand: Decimal
+    upper_demand: Decimal
     interval_method: str
     model_version: str
     feature_snapshot_id: str
-    data_sufficiency: bool
+    data_sufficient: bool
     quality_flags: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -58,13 +63,13 @@ class ForecastResult:
                 raise ValueError(f"{ts_name} must be timezone-aware")
         if self.window_end <= self.window_start:
             raise ValueError("window_end must be after window_start")
-        for d_name in ("demand_point", "demand_lower", "demand_upper"):
+        for d_name in ("point_demand", "lower_demand", "upper_demand"):
             d = getattr(self, d_name)
             if not d.is_finite():
                 raise ValueError(f"{d_name} must be finite")
             if d < 0:
                 raise ValueError(f"{d_name} must be non-negative")
-        if self.demand_lower > self.demand_point:
-            raise ValueError("demand_lower must not exceed demand_point")
-        if self.demand_upper < self.demand_point:
-            raise ValueError("demand_upper must not be less than demand_point")
+        if self.lower_demand > self.point_demand:
+            raise ValueError("lower_demand must not exceed point_demand")
+        if self.upper_demand < self.point_demand:
+            raise ValueError("upper_demand must not be less than point_demand")
