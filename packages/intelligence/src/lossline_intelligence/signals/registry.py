@@ -3,6 +3,8 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
+from hashlib import sha256
+import json
 from types import MappingProxyType
 from typing import Annotated, Mapping
 
@@ -59,17 +61,55 @@ class ForecastSafetyError(ValueError):
 
 
 class SignalRegistry:
-    def __init__(self, definitions: tuple[SignalDefinition, ...]) -> None:
+    def __init__(
+        self,
+        definitions: tuple[SignalDefinition, ...],
+        *,
+        registry_version: Identifier = "signal_registry.v1",
+    ) -> None:
+        if not str(registry_version).strip():
+            raise RegistryError("registry_version must be non-empty")
         entries: dict[str, SignalDefinition] = {}
         for definition in definitions:
             if definition.signal_type in entries:
                 raise RegistryError(f"duplicate signal type: {definition.signal_type}")
             entries[definition.signal_type] = definition
+        if not entries:
+            raise RegistryError("signal registry cannot be empty")
+        self._registry_version = str(registry_version).strip()
         self._entries: Mapping[str, SignalDefinition] = MappingProxyType(entries)
 
     @property
+    def registry_version(self) -> str:
+        return self._registry_version
+
+    @property
     def definitions(self) -> tuple[SignalDefinition, ...]:
-        return tuple(self._entries.values())
+        return tuple(self._entries[key] for key in sorted(self._entries))
+
+    @property
+    def fingerprint(self) -> str:
+        payload = [
+            {
+                "signal_type": item.signal_type,
+                "version": item.version,
+                "category": item.category.value,
+                "entity_type": item.entity_type.value,
+                "value_kind": item.value_kind.value,
+                "unit": item.unit,
+                "forecast_safe": item.forecast_safe,
+                "max_staleness_seconds": item.max_staleness.total_seconds(),
+                "leakage_rationale": item.leakage_rationale,
+                "allowed_sources": sorted(item.allowed_sources),
+            }
+            for item in self.definitions
+        ]
+        encoded = json.dumps(
+            {"registry_version": self.registry_version, "signals": payload},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return sha256(encoded).hexdigest()
 
     def definition_for(self, signal_type: str) -> SignalDefinition:
         try:
@@ -110,4 +150,3 @@ class SignalRegistry:
         if as_of - signal.observed_at > definition.max_staleness:
             raise ForecastSafetyError("signal exceeds its maximum staleness")
         return definition
-

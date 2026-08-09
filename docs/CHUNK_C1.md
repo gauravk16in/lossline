@@ -2,6 +2,8 @@
 
 Status: complete
 
+> Mapping notice: this pre-reengineering C1 artifact is preserved as implementation history. Its responsibility is now owned and extended by `docs/reengineering/chunks/C02_SIGNAL_REGISTRY.md` under ADR 0003. C02 adds the required feature registry and reproducibility fingerprints.
+
 ## Scope
 
 C1 adds the predictive observation boundary without altering the reactive detector contract.
@@ -45,4 +47,3 @@ Effective time is deliberately not constrained to the past. A promotion or weath
 - Point-in-time tests prove future-observed and late-ingested records are excluded.
 - At-boundary, stale, unsafe, unknown, malformed, and repeatability cases pass.
 - The full pre-existing intelligence test suite remains green.
-

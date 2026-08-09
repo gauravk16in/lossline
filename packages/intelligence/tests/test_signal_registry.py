@@ -101,6 +101,15 @@ def test_registry_rejects_unknown_and_duplicate_types() -> None:
         SignalRegistry((item, item))
 
 
+def test_signal_registry_requires_entries_and_exposes_version() -> None:
+    with pytest.raises(RegistryError, match="cannot be empty"):
+        SignalRegistry(())
+    result = registry()
+    assert result.registry_version == "signal_registry.v1"
+    assert result.fingerprint == registry().fingerprint
+    assert len(result.fingerprint) == 64
+
+
 def test_forecast_safety_excludes_future_observation() -> None:
     item = signal(
         observed_at=AS_OF + timedelta(minutes=1),
@@ -147,4 +156,3 @@ def test_forecast_safety_rejects_registered_outcome_and_naive_as_of() -> None:
         unsafe.require_forecast_safe(signal(), prediction_as_of=AS_OF)
     with pytest.raises(ForecastSafetyError, match="UTC offset"):
         registry().require_forecast_safe(signal(), prediction_as_of=AS_OF.replace(tzinfo=None))
-
