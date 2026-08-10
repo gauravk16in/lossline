@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["bom1"],
   "buildCommand": "./scripts/vercel-build.sh",
-  "outputDirectory": "public",
+  "outputDirectory": "apps/frontend/dist",
   "functions": {
     "api/index.py": {
       "maxDuration": 300,
